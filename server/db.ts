@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { InsertUser, users, userWallets, type UserWallet } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +89,99 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+// ------------------------------------------------------------------
+// Wallet Management Queries
+// ------------------------------------------------------------------
+
+export async function addUserWallet(userId: number, address: string, label?: string): Promise<UserWallet> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  // Normalize address to lowercase
+  const normalizedAddress = address.toLowerCase();
+
+  await db.insert(userWallets).values({
+    userId,
+    address: normalizedAddress,
+    label: label || null,
+    isActive: 'true',
+  });
+
+  // Return the inserted wallet by querying the most recent entry
+  const inserted = await db
+    .select()
+    .from(userWallets)
+    .where(eq(userWallets.userId, userId))
+    .orderBy(userWallets.createdAt)
+    .limit(1);
+
+  if (!inserted.length) {
+    throw new Error("Failed to retrieve inserted wallet");
+  }
+
+  return inserted[0];
+}
+
+export async function getUserWallets(userId: number): Promise<UserWallet[]> {
+  const db = await getDb();
+  if (!db) {
+    console.warn("[Database] Cannot get wallets: database not available");
+    return [];
+  }
+
+  return db
+    .select()
+    .from(userWallets)
+    .where(eq(userWallets.userId, userId));
+}
+
+export async function removeUserWallet(walletId: number, userId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  // Ensure user owns this wallet
+  const wallet = await db
+    .select()
+    .from(userWallets)
+    .where(eq(userWallets.id, walletId))
+    .limit(1);
+
+  if (!wallet.length || wallet[0].userId !== userId) {
+    throw new Error("Wallet not found or unauthorized");
+  }
+
+  await db.delete(userWallets).where(eq(userWallets.id, walletId));
+  return true;
+}
+
+export async function updateWalletLabel(walletId: number, userId: number, label: string): Promise<UserWallet> {
+  const db = await getDb();
+  if (!db) {
+    throw new Error("Database not available");
+  }
+
+  // Ensure user owns this wallet
+  const wallet = await db
+    .select()
+    .from(userWallets)
+    .where(eq(userWallets.id, walletId))
+    .limit(1);
+
+  if (!wallet.length || wallet[0].userId !== userId) {
+    throw new Error("Wallet not found or unauthorized");
+  }
+
+  await db.update(userWallets).set({ label }).where(eq(userWallets.id, walletId));
+
+  const updated = await db
+    .select()
+    .from(userWallets)
+    .where(eq(userWallets.id, walletId))
+    .limit(1);
+
+  return updated[0];
+}

@@ -1,31 +1,38 @@
-import { useAuth } from "@/_core/hooks/useAuth";
-import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
-import { getLoginUrl } from "@/const";
-import { Streamdown } from 'streamdown';
+import DashboardLayout from "@/components/DashboardLayout";
+import WalletInput from "@/components/WalletInput";
+import WalletList from "@/components/WalletList";
+import PortfolioWidget from "@/components/PortfolioWidget";
 
 /**
- * All content in this page are only for example, replace with your own feature implementation
- * When building pages, remember your instructions in Frontend Workflow, Frontend Best Practices, Design Guide and Common Pitfalls
+ * Home page - Dashboard for AEGIS crypto wallet
+ * Displays wallet management and portfolio tracking
  */
 export default function Home() {
-  // The userAuth hooks provides authentication state
-  // To implement login/logout functionality, simply call logout() or redirect to getLoginUrl()
-  let { user, loading, error, isAuthenticated, logout } = useAuth();
-
-  // If theme is switchable in App.tsx, we can implement theme toggling like this:
-  // const { theme, toggleTheme } = useTheme();
-
   return (
-    <div className="min-h-screen flex flex-col">
-      <main>
-        {/* Example: lucide-react for icons */}
-        <Loader2 className="animate-spin" />
-        Example Page
-        {/* Example: Streamdown for markdown rendering */}
-        <Streamdown>Any **markdown** content</Streamdown>
-        <Button variant="default">Example Button</Button>
-      </main>
-    </div>
+    <DashboardLayout>
+      <div className="flex flex-col gap-6 p-6 max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="space-y-2">
+          <h1 className="text-3xl font-bold tracking-tight">AEGIS Wallet Dashboard</h1>
+          <p className="text-muted-foreground">
+            Manage your crypto wallets and track your portfolio in real-time
+          </p>
+        </div>
+
+        {/* Main Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column - Wallet Management */}
+          <div className="lg:col-span-1 space-y-6">
+            <WalletInput />
+            <WalletList />
+          </div>
+
+          {/* Right Column - Portfolio */}
+          <div className="lg:col-span-2">
+            <PortfolioWidget />
+          </div>
+        </div>
+      </div>
+    </DashboardLayout>
   );
 }

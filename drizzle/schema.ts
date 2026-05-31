@@ -25,4 +25,19 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+/**
+ * User wallets table for tracking multiple wallet addresses per user.
+ * Supports multi-chain wallets (Ethereum, BSC, Polygon, Arbitrum).
+ */
+export const userWallets = mysqlTable("user_wallets", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  address: varchar("address", { length: 42 }).notNull(), // 0x + 40 hex chars
+  label: varchar("label", { length: 255 }), // e.g., "Main Wallet", "Trading"
+  isActive: mysqlEnum("isActive", ["true", "false"]).default("true").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type UserWallet = typeof userWallets.$inferSelect;
+export type InsertUserWallet = typeof userWallets.$inferInsert;
