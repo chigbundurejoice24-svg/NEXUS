@@ -1,22 +1,17 @@
 {
   "version": 2,
-  "buildCommand": "pnpm run build",
+  "buildCommand": "pnpm run build && cp dist/index.js api/server.js",
   "installCommand": "npm install -g pnpm && pnpm install",
   "outputDirectory": "dist/public",
   "framework": null,
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/index.ts"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
-    }
-  ],
   "functions": {
-    "api/index.ts": {
-      "maxDuration": 30
+    "api/server.js": {
+      "maxDuration": 30,
+      "memory": 512
     }
-  }
+  },
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/server.js" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
