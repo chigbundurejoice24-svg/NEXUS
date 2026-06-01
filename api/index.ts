@@ -1,11 +1,9 @@
-import "dotenv/config";
 import express from "express";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "../server/_core/oauth";
 import { registerStorageProxy } from "../server/_core/storageProxy";
 import { appRouter } from "../server/routers";
 import { createContext } from "../server/_core/context";
-import { serveStatic } from "../server/_core/vite";
 
 const app = express();
 
@@ -22,7 +20,5 @@ app.use(
     createContext,
   })
 );
-
-serveStatic(app);
 
 export default app;
