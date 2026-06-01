@@ -1,42 +1,37 @@
-import { Toaster } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
-import ErrorBoundary from "./components/ErrorBoundary";
-import { ThemeProvider } from "./contexts/ThemeContext";
-import Home from "./pages/Home";
+import { Routes, Route } from 'react-router-dom'
+import AppLayout from '@/components/layout/AppLayout'
+import Dashboard from '@/pages/Dashboard'
+import Wallets from '@/pages/Wallets'
+import SendMoney from '@/pages/SendMoney'
+import ReceiveMoney from '@/pages/ReceiveMoney'
+import FundWallet from '@/pages/FundWallet'
+import Transactions from '@/pages/Transactions'
+import Exchange from '@/pages/Exchange'
+import Rates from '@/pages/Rates'
+import AegisAI from '@/pages/AegisAI'
+import Rewards from '@/pages/Rewards'
+import Settings from '@/pages/Settings'
+import Profile from '@/pages/Profile'
+import DeveloperAPI from '@/pages/DeveloperAPI'
 
-function Router() {
-  // make sure to consider if you need authentication for certain routes
+export default function App() {
   return (
-    <Switch>
-      <Route path={"/"} component={Home} />
-      <Route path={"/404"} component={NotFound} />
-      {/* Final fallback route */}
-      <Route component={NotFound} />
-    </Switch>
-  );
+    <Routes>
+      <Route element={<AppLayout />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/wallets" element={<Wallets />} />
+        <Route path="/send" element={<SendMoney />} />
+        <Route path="/receive" element={<ReceiveMoney />} />
+        <Route path="/fund" element={<FundWallet />} />
+        <Route path="/transactions" element={<Transactions />} />
+        <Route path="/exchange" element={<Exchange />} />
+        <Route path="/rates" element={<Rates />} />
+        <Route path="/ai" element={<AegisAI />} />
+        <Route path="/rewards" element={<Rewards />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route path="/profile" element={<Profile />} />
+        <Route path="/api" element={<DeveloperAPI />} />
+      </Route>
+    </Routes>
+  )
 }
-
-// NOTE: About Theme
-// - First choose a default theme according to your design style (dark or light bg), than change color palette in index.css
-//   to keep consistent foreground/background color across components
-// - If you want to make theme switchable, pass `switchable` ThemeProvider and use `useTheme` hook
-
-function App() {
-  return (
-    <ErrorBoundary>
-      <ThemeProvider
-        defaultTheme="light"
-        // switchable
-      >
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
-      </ThemeProvider>
-    </ErrorBoundary>
-  );
-}
-
-export default App;
