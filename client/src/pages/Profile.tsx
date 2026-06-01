@@ -1,159 +1,112 @@
-import { motion } from 'framer-motion'
+import { motion } from "framer-motion";
 import {
-  Shield, Check, Calendar, Receipt, TrendingUp,
-  Wallet, Award, ArrowRight, Globe, MapPin
-} from 'lucide-react'
-import { userProfile, transactions, wallets } from '@/data/mockData'
+  User, Mail, Phone, Shield, BadgeCheck, Settings,
+  ChevronRight, Star,
+} from "lucide-react";
+import { useCurrentUser } from "@/hooks/useAuth";
+import { useWallets } from "@/hooks/useWallets";
+import { Skeleton } from "@/components/ui/skeleton";
+
+const KYC_LABELS: Record<string, { label: string; color: string }> = {
+  NONE:     { label: "Not Verified",  color: "text-aegis-tertiary-dark" },
+  PENDING:  { label: "Pending",       color: "text-yellow-500" },
+  VERIFIED: { label: "Verified",      color: "text-aegis-success-green" },
+  REJECTED: { label: "Rejected",      color: "text-red-500" },
+};
 
 export default function Profile() {
-  const completedTxs = transactions.filter((t) => t.status === 'completed')
-  const totalVolume = completedTxs.reduce((sum, t) => sum + t.fiatValue, 0)
+  const { user, isLoading } = useCurrentUser();
+  const { linkedWallets, totalValueUsd, totalWallets } = useWallets();
+
+  const kyc = KYC_LABELS[user?.kycStatus ?? "NONE"] ?? KYC_LABELS.NONE;
 
   return (
-    <div className="max-w-3xl mx-auto pb-20 lg:pb-0 space-y-6">
-      {/* Profile Header */}
+    <div className="max-w-2xl mx-auto space-y-6 pb-20 lg:pb-0">
+      {/* Avatar + Name */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-card border border-border rounded-xl p-6"
+        className="bg-card border border-border rounded-xl p-6 flex items-center gap-5"
       >
-        <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
-          <div className="relative">
-            <img
-              src={userProfile.avatar}
-              alt={userProfile.name}
-              className="w-20 h-20 rounded-full object-cover border-3 border-aegis-accent-purple/20"
-            />
-            <div className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full gradient-brand flex items-center justify-center border-2 border-white dark:border-card">
-              <Check size={14} className="text-white" />
-            </div>
-          </div>
-          <div className="text-center sm:text-left flex-1">
-            <h2 className="text-xl font-semibold text-aegis-primary-dark dark:text-white">{userProfile.name}</h2>
-            <p className="text-sm text-aegis-secondary-dark">{userProfile.email}</p>
-            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mt-3">
-              <span className="flex items-center gap-1 text-[10px] bg-aegis-success-green/10 text-aegis-success-green px-2.5 py-1 rounded-full font-medium">
-                <Shield size={10} /> {userProfile.verificationStatus}
-              </span>
-              <span className="flex items-center gap-1 text-[10px] bg-purple-50 dark:bg-purple-900/20 text-aegis-accent-purple px-2.5 py-1 rounded-full font-medium">
-                <Award size={10} /> {userProfile.level}
-              </span>
-              <span className="flex items-center gap-1 text-[10px] bg-aegis-bg-elevated text-aegis-tertiary-dark px-2.5 py-1 rounded-full font-medium">
-                <MapPin size={10} /> {userProfile.country}
-              </span>
-            </div>
-          </div>
-          <div className="flex flex-col items-center gap-1 bg-aegis-bg-elevated rounded-xl p-3 min-w-[80px]">
-            <span className="text-xs text-aegis-tertiary-dark">Level</span>
-            <span className="text-lg font-semibold text-aegis-primary-dark dark:text-white">{userProfile.level}</span>
-          </div>
+        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#5B3CF5] to-[#3B5BDB] flex items-center justify-center text-white text-2xl font-bold flex-shrink-0">
+          {isLoading ? "?" : (user?.name?.charAt(0).toUpperCase() ?? "A")}
         </div>
-
-        {/* XP Bar */}
-        <div className="mt-5">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-aegis-tertiary-dark">XP Progress</span>
-            <span className="text-xs text-aegis-tertiary-dark">{userProfile.xp} / {userProfile.maxXp}</span>
-          </div>
-          <div className="h-2 bg-aegis-bg-elevated rounded-full overflow-hidden">
-            <div
-              className="h-full gradient-brand rounded-full"
-              style={{ width: `${(userProfile.xp / userProfile.maxXp) * 100}%` }}
-            />
+        <div className="flex-1 min-w-0">
+          {isLoading ? (
+            <>
+              <Skeleton className="h-5 w-36 mb-2 rounded" />
+              <Skeleton className="h-4 w-48 rounded" />
+            </>
+          ) : (
+            <>
+              <h2 className="text-lg font-semibold text-aegis-primary-dark dark:text-white truncate">
+                {user?.name ?? "Anonymous"}
+              </h2>
+              <p className="text-sm text-aegis-tertiary-dark truncate">{user?.email ?? "—"}</p>
+            </>
+          )}
+          <div className={`flex items-center gap-1 mt-1 text-xs font-medium ${kyc.color}`}>
+            <BadgeCheck size={13} />
+            {kyc.label}
           </div>
         </div>
       </motion.div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3">
         {[
-          { label: 'Member Since', value: userProfile.memberSince, icon: Calendar },
-          { label: 'Total Transactions', value: `${userProfile.totalTransactions}`, icon: Receipt },
-          { label: 'Total Volume', value: `₦${(totalVolume / 1e6).toFixed(1)}M`, icon: TrendingUp },
-          { label: 'Wallets', value: `${wallets.length} Connected`, icon: Wallet },
-        ].map((stat, index) => (
-          <motion.div
-            key={stat.label}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.05 }}
-            className="bg-card border border-border rounded-xl p-4"
-          >
-            <stat.icon size={16} className="text-aegis-accent-purple mb-2" />
-            <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white">{stat.value}</p>
+          { label: "Wallets", value: totalWallets },
+          { label: "Portfolio", value: `$${parseFloat(totalValueUsd).toLocaleString("en-US", { minimumFractionDigits: 2 })}` },
+          { label: "KYC", value: user?.kycStatus ?? "NONE" },
+        ].map((stat) => (
+          <div key={stat.label} className="bg-card border border-border rounded-xl p-4 text-center">
+            <p className="text-lg font-semibold text-aegis-primary-dark dark:text-white">{stat.value}</p>
             <p className="text-xs text-aegis-tertiary-dark mt-0.5">{stat.label}</p>
-          </motion.div>
+          </div>
         ))}
       </div>
 
-      {/* Connected Accounts */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <h3 className="text-sm font-semibold text-aegis-primary-dark dark:text-white mb-3">Connected Accounts</h3>
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
-            <div className="w-9 h-9 rounded-lg bg-orange-100 dark:bg-orange-900/20 flex items-center justify-center">
-              <Wallet size={16} className="text-orange-500" />
+      {/* Details */}
+      <div className="bg-card border border-border rounded-xl divide-y divide-border">
+        {[
+          { icon: User,   label: "Full Name",    value: user?.name ?? "—" },
+          { icon: Mail,   label: "Email",        value: user?.email ?? "—" },
+          { icon: Shield, label: "Account Role", value: user?.role ?? "user" },
+          { icon: Star,   label: "KYC Status",   value: user?.kycStatus ?? "NONE" },
+        ].map(({ icon: Icon, label, value }) => (
+          <div key={label} className="flex items-center gap-4 px-5 py-4">
+            <div className="w-9 h-9 rounded-xl bg-aegis-bg-elevated flex items-center justify-center flex-shrink-0">
+              <Icon size={16} className="text-aegis-accent-purple" />
             </div>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">MetaMask</p>
-              <p className="text-xs text-aegis-tertiary-dark">0x7A2b...C99D</p>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-aegis-tertiary-dark">{label}</p>
+              <p className="text-sm font-medium text-aegis-primary-dark dark:text-white truncate capitalize">{value}</p>
             </div>
-            <span className="text-[10px] bg-aegis-success-green/10 text-aegis-success-green px-2 py-0.5 rounded-full font-medium">Active</span>
           </div>
-          <div className="flex items-center gap-3 px-4 py-3.5">
-            <div className="w-9 h-9 rounded-lg bg-blue-100 dark:bg-blue-900/20 flex items-center justify-center">
-              <Globe size={16} className="text-blue-500" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">Bank Account</p>
-              <p className="text-xs text-aegis-tertiary-dark">**** **** **** 4521</p>
-            </div>
-            <span className="text-[10px] bg-aegis-success-green/10 text-aegis-success-green px-2 py-0.5 rounded-full font-medium">Verified</span>
-          </div>
-        </div>
-      </motion.div>
+        ))}
+      </div>
 
-      {/* Recent Activity */}
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-aegis-primary-dark dark:text-white">Recent Activity</h3>
-        </div>
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
-          {transactions.slice(0, 3).map((tx, index) => (
-            <div
-              key={tx.id}
-              className={`flex items-center gap-3 px-4 py-3 ${index < 2 ? 'border-b border-border' : ''}`}
-            >
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                tx.type === 'receive' ? 'bg-green-50 dark:bg-green-900/20' :
-                tx.type === 'send' ? 'bg-red-50 dark:bg-red-900/20' :
-                'bg-purple-50 dark:bg-purple-900/20'
-              }`}>
-                {tx.type === 'receive' ? <TrendingUp size={14} className="text-aegis-success-green" /> :
-                 tx.type === 'send' ? <ArrowRight size={14} className="text-red-500" /> :
-                 <Wallet size={14} className="text-aegis-accent-purple" />}
-              </div>
-              <div className="flex-1">
-                <p className="text-sm text-aegis-primary-dark dark:text-white">{tx.description}</p>
-                <p className="text-xs text-aegis-tertiary-dark">
-                  {new Date(tx.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                </p>
-              </div>
-              <span className={`text-sm font-medium ${
-                tx.type === 'receive' ? 'text-aegis-success-green' : 'text-aegis-primary-dark dark:text-white'
-              }`}>
-                {tx.type === 'receive' ? '+' : '-'}{tx.amount} {tx.symbol}
-              </span>
+      {/* Passkey info */}
+      <div className="bg-card border border-border rounded-xl p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-aegis-bg-elevated flex items-center justify-center">
+              <Shield size={16} className="text-aegis-accent-purple" />
             </div>
-          ))}
+            <div>
+              <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">Passkey Auth</p>
+              <p className="text-xs text-aegis-tertiary-dark">
+                {user?.credentialId ? "Passkey registered" : "No passkey set up yet"}
+              </p>
+            </div>
+          </div>
+          <div className={`w-2 h-2 rounded-full ${user?.credentialId ? "bg-aegis-success-green" : "bg-aegis-tertiary-dark"}`} />
         </div>
-      </motion.div>
+      </div>
+
+      <p className="text-xs text-center text-aegis-tertiary-dark">
+        Member since {user?.createdAt ? new Date(user.createdAt).toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "—"}
+      </p>
     </div>
-  )
+  );
 }
