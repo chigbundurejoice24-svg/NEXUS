@@ -1,24 +1,19 @@
-import express from "express";
-import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes } from "../server/_core/oauth";
-import { registerStorageProxy } from "../server/_core/storageProxy";
-import { appRouter } from "../server/routers";
-import { createContext } from "../server/_core/context";
+import path from "path";
+import { createServer } from "http";
 
-const app = express();
+// Dynamically import the pre-built server bundle
+let handler: any;
 
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+async function getApp() {
+  if (!handler) {
+    // The build outputs dist/index.js which is the full Express server
+    const serverModule = await import(path.resolve(process.cwd(), "dist/index.js"));
+    handler = serverModule.default || serverModule;
+  }
+  return handler;
+}
 
-registerStorageProxy(app);
-registerOAuthRoutes(app);
-
-app.use(
-  "/api/trpc",
-  createExpressMiddleware({
-    router: appRouter,
-    createContext,
-  })
-);
-
-export default app;
+export default async function(req: any, res: any) {
+  const app = await getApp();
+  app(req, res);
+}
