@@ -1,269 +1,170 @@
-import { useState, useEffect } from 'react';
+/**
+ * FundWallet.tsx — Wired to trpc.ramps.onrampAll for live provider URLs
+ */
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ChevronDown, CreditCard, Zap, Star, Check,
-  Clock, ExternalLink, Wallet, Loader2, AlertCircle,
+  ChevronDown, Star, Check, Clock, ExternalLink,
+  Wallet, Loader2, AlertCircle, RefreshCw, Copy, CheckCheck,
 } from 'lucide-react';
 import { africanCountries } from '@/data/mockData';
 import { useNgnRate } from '@/hooks/useNgnRate';
-import { openTransak, openMoonPay } from '@/hooks/useOnramp';
-import { trpc } from '@/lib/trpc';
-import { getToken } from '@/lib/trpc';
-
-interface Provider {
-  id: string;
-  name: string;
-  description: string;
-  processingTime: string;
-  rating: number;
-  fee: string;
-  isRecommended?: boolean;
-  color: string;
-  open: (wallet: string, fiat: string, amount: number, email?: string) => void;
-}
-
-const PROVIDERS: Provider[] = [
-  {
-    id: 'transak',
-    name: 'Transak',
-    description: 'Card, bank transfer, mobile money',
-    processingTime: '5–10 min',
-    rating: 4.8,
-    fee: '1.5–2%',
-    isRecommended: true,
-    color: '#0070F3',
-    open: (w, f, a, e) => openTransak({ walletAddress: w, fiatCurrency: f, defaultAmount: a, email: e }),
-  },
-  {
-    id: 'moonpay',
-    name: 'MoonPay',
-    description: 'Card & bank transfer, 150+ countries',
-    processingTime: '10–20 min',
-    rating: 4.6,
-    fee: '2.5–3.5%',
-    color: '#7B2FBE',
-    open: (w, f, a, e) => openMoonPay({ walletAddress: w, fiatCurrency: f, defaultAmount: a, email: e }),
-  },
-];
+import { trpc, getToken } from '@/lib/trpc';
+import { Skeleton } from '@/components/ui/skeleton';
 
 export default function FundWallet() {
-  const { rate, loading: rateLoading } = useNgnRate();
-  const [amount, setAmount] = useState('50000');
-  const [selectedCurrency, setSelectedCurrency] = useState(africanCountries[0]);
-  const [showCurrencyDropdown, setShowCurrencyDropdown] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<string | null>('transak');
-  const [launching, setLaunching] = useState(false);
+  const { rate } = useNgnRate();
+  const [amount, setAmount]                 = useState('50000');
+  const [selectedCurrency, setCurrency]     = useState(africanCountries[0]);
+  const [showDrop, setShowDrop]             = useState(false);
+  const [selectedProvider, setProvider]     = useState<string>('transak');
+  const [launching, setLaunching]           = useState(false);
+  const [copied, setCopied]                 = useState(false);
 
-  // Fetch the logged-in user's wallet addresses
-  const hasToken = !!getToken();
-  const { data: wallets, isLoading: walletsLoading } = (trpc as any).accounts.myWallets.useQuery(
+  const hasToken  = !!getToken();
+  const fiatNum   = parseFloat(amount) || 0;
+  const usdtEst   = rate > 0 ? (fiatNum / rate).toFixed(2) : '—';
+
+  // Wallet address from backend
+  const { data: wallets, isLoading: walletLoading } = (trpc as any).accounts.myWallets.useQuery(
     undefined, { enabled: hasToken, retry: false }
   );
-
-  // Pick the first EMBEDDED BSC wallet as the deposit address
-  const embeddedWallet = wallets?.find(
-    (w: any) => w.type === 'EMBEDDED' && (w.chainId === 56 || w.chainId === '56')
-  );
+  const embeddedWallet = wallets?.find((w: any) => w.type === 'EMBEDDED');
   const walletAddress: string | null = embeddedWallet?.address ?? null;
 
-  const fiatNum = parseFloat(amount) || 0;
-  const usdtEstimate = rate > 0 ? (fiatNum / rate).toFixed(2) : '—';
+  // Live provider URLs from backend
+  const { data: providers, isLoading: providersLoading, refetch } = (trpc as any).ramps.onrampAll.useQuery(
+    { fiatAmount: fiatNum || 50000, fiatCurrency: selectedCurrency.currency, cryptoCurrency: 'USDT' },
+    { enabled: hasToken && fiatNum > 0 }
+  );
+
+  const selected = (providers ?? []).find((p: any) => p.id === selectedProvider) ?? providers?.[0];
 
   const handleLaunch = () => {
-    if (!walletAddress) return;
-    const provider = PROVIDERS.find(p => p.id === selectedProvider);
-    if (!provider) return;
+    if (!selected?.url) return;
     setLaunching(true);
-    try {
-      provider.open(walletAddress, selectedCurrency.currency, fiatNum);
-    } finally {
-      setTimeout(() => setLaunching(false), 1500);
-    }
+    window.open(selected.url, '_blank', 'width=420,height=680,noopener,noreferrer');
+    setTimeout(() => setLaunching(false), 1500);
+  };
+
+  const copyAddress = () => {
+    if (!walletAddress) return;
+    navigator.clipboard.writeText(walletAddress);
+    setCopied(true); setTimeout(() => setCopied(false), 2000);
   };
 
   return (
     <div className="max-w-3xl mx-auto pb-20 lg:pb-0">
-      <p className="text-sm text-aegis-secondary-dark mb-6">
-        Add funds to your wallet — sent directly on-chain, no middleman.
-      </p>
+      <p className="text-sm text-aegis-secondary-dark mb-6">Add funds — sent directly on-chain, no middleman.</p>
 
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-5"
-      >
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+
         {/* Wallet Address Banner */}
         <div className="bg-card border border-border rounded-xl p-4">
           <div className="flex items-center gap-2 mb-1">
             <Wallet size={14} className="text-aegis-accent-purple" />
-            <span className="text-xs font-medium text-aegis-tertiary-dark uppercase tracking-wider">
-              Your Deposit Address (BSC · USDT)
-            </span>
+            <span className="text-xs font-medium text-aegis-tertiary-dark uppercase tracking-wider">Your Deposit Address (BSC · USDT)</span>
           </div>
-          {walletsLoading ? (
-            <div className="flex items-center gap-2 mt-1">
-              <Loader2 size={14} className="animate-spin text-aegis-tertiary-dark" />
-              <span className="text-xs text-aegis-tertiary-dark">Loading wallet…</span>
-            </div>
-          ) : walletAddress ? (
-            <div className="flex items-center justify-between gap-2 mt-1">
-              <p className="font-mono text-sm text-aegis-primary-dark dark:text-white break-all">
-                {walletAddress}
-              </p>
-              <button
-                onClick={() => navigator.clipboard.writeText(walletAddress)}
-                className="text-[10px] px-2 py-1 bg-aegis-bg-elevated rounded-lg text-aegis-tertiary-dark hover:text-aegis-primary-dark transition-colors flex-shrink-0"
-              >
-                Copy
+          {walletLoading ? <Skeleton className="h-6 w-full mt-2" /> : walletAddress ? (
+            <div className="flex items-center justify-between mt-2">
+              <code className="text-sm font-mono text-aegis-primary-dark dark:text-white break-all flex-1">{walletAddress}</code>
+              <button onClick={copyAddress} className="ml-3 p-1.5 rounded-lg hover:bg-aegis-bg-elevated transition-colors shrink-0">
+                {copied ? <CheckCheck size={14} className="text-aegis-success-green" /> : <Copy size={14} className="text-aegis-tertiary-dark" />}
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-2 mt-1">
-              <AlertCircle size={14} className="text-amber-500" />
-              <p className="text-xs text-aegis-tertiary-dark">
-                {hasToken ? 'No embedded wallet yet — register to get one automatically.' : 'Log in to see your wallet address.'}
-              </p>
-            </div>
+            <p className="text-xs text-amber-600 mt-1 flex items-center gap-1.5"><AlertCircle size={12} /> Log in to see your deposit address</p>
           )}
-          <p className="text-[11px] text-aegis-tertiary-dark mt-2">
-            The provider sends USDT directly to this address. Aegis never touches your funds.
-          </p>
+          <p className="text-[10px] text-aegis-tertiary-dark mt-2">The provider sends USDT directly here. Aegis never touches your funds.</p>
         </div>
 
-        {/* Currency */}
-        <div className="bg-card border border-border rounded-xl p-4">
-          <label className="text-xs font-medium text-aegis-tertiary-dark uppercase tracking-wider mb-2 block">
-            Pay With
-          </label>
-          <button
-            onClick={() => setShowCurrencyDropdown(!showCurrencyDropdown)}
-            className="w-full flex items-center gap-3 p-3 rounded-lg border border-border hover:border-aegis-accent-purple/40 transition-colors"
-          >
-            <span className="text-2xl">{selectedCurrency.flag}</span>
-            <div className="flex-1 text-left">
-              <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">{selectedCurrency.currency}</p>
-              <p className="text-xs text-aegis-tertiary-dark">{selectedCurrency.name}</p>
-            </div>
-            <ChevronDown size={16} className="text-aegis-tertiary-dark" />
-          </button>
-          <AnimatePresence>
-            {showCurrencyDropdown && (
-              <motion.div
-                initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
-                className="mt-2 border border-border rounded-lg overflow-hidden bg-card max-h-48 overflow-y-auto"
-              >
-                {africanCountries.map((c) => (
-                  <button key={c.code} onClick={() => { setSelectedCurrency(c); setShowCurrencyDropdown(false); }}
-                    className="w-full flex items-center gap-3 p-3 hover:bg-aegis-bg-elevated transition-colors">
-                    <span className="text-xl">{c.flag}</span>
-                    <p className="text-sm text-aegis-primary-dark dark:text-white">{c.currency}</p>
-                    <p className="text-xs text-aegis-tertiary-dark ml-auto">{c.name}</p>
-                  </button>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Amount */}
-        <div className="bg-card border border-border rounded-xl p-4">
-          <label className="text-xs font-medium text-aegis-tertiary-dark uppercase tracking-wider mb-2 block">
-            Amount
-          </label>
-          <div className="flex items-center gap-3">
-            <input
-              type="number" value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="50000"
-              className="flex-1 text-3xl font-semibold bg-transparent text-aegis-primary-dark dark:text-white placeholder:text-aegis-tertiary-dark focus:outline-none"
-            />
-            <span className="text-lg font-medium text-aegis-primary-dark dark:text-white">
-              {selectedCurrency.currency}
-            </span>
+        {/* Amount + Currency */}
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <p className="text-xs font-medium text-aegis-tertiary-dark uppercase tracking-wider">Pay With</p>
+          <div className="relative">
+            <button onClick={() => setShowDrop(!showDrop)}
+              className="w-full flex items-center justify-between px-4 py-3 border border-border rounded-xl bg-aegis-bg-elevated hover:border-aegis-accent-purple transition-all text-sm">
+              <span className="flex items-center gap-2">
+                <span className="text-xl">{selectedCurrency.flag}</span>
+                <span className="font-medium">{selectedCurrency.name}</span>
+                <span className="text-aegis-tertiary-dark">({selectedCurrency.currency})</span>
+              </span>
+              <ChevronDown size={14} className={`text-aegis-tertiary-dark transition-transform ${showDrop ? 'rotate-180' : ''}`} />
+            </button>
+            <AnimatePresence>
+              {showDrop && (
+                <motion.div initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
+                  className="absolute z-20 w-full mt-2 bg-card border border-border rounded-xl shadow-lg overflow-hidden max-h-56 overflow-y-auto">
+                  {africanCountries.map(c => (
+                    <button key={c.currency} onClick={() => { setCurrency(c); setShowDrop(false); }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-sm hover:bg-aegis-bg-elevated transition-colors ${c.currency === selectedCurrency.currency ? 'bg-aegis-bg-elevated' : ''}`}>
+                      <span className="text-xl">{c.flag}</span><span className="flex-1 text-left">{c.name}</span>
+                      <span className="text-aegis-tertiary-dark text-xs">{c.currency}</span>
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-          {fiatNum > 0 && (
-            <p className="text-sm text-aegis-secondary-dark mt-2">
-              {rateLoading ? 'Fetching rate…' : `≈ ${usdtEstimate} USDT  (1 USD = ${selectedCurrency.currency} ${rate.toFixed(2)})`}
-            </p>
-          )}
+
+          <div>
+            <p className="text-xs font-medium text-aegis-tertiary-dark uppercase tracking-wider mb-1.5">Amount</p>
+            <div className="flex items-center border border-border rounded-xl overflow-hidden">
+              <input type="number" value={amount} onChange={e => setAmount(e.target.value)} onBlur={() => refetch()}
+                className="flex-1 px-4 py-3 text-lg font-semibold bg-aegis-bg-elevated focus:outline-none"
+                placeholder="50000" min="100" />
+              <span className="px-4 text-sm font-medium text-aegis-secondary-dark border-l border-border bg-card py-3">{selectedCurrency.currency}</span>
+            </div>
+            <p className="text-xs text-aegis-tertiary-dark mt-1.5">≈ {usdtEst} USDT</p>
+          </div>
         </div>
 
         {/* Providers */}
-        <div>
+        <div className="bg-card border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-aegis-primary-dark dark:text-white">Choose Provider</h3>
-            <span className="text-xs text-aegis-tertiary-dark">KYC handled by provider</span>
+            <p className="text-xs font-medium text-aegis-tertiary-dark uppercase tracking-wider">Choose Provider</p>
+            <p className="text-[10px] text-aegis-tertiary-dark">KYC handled by provider</p>
           </div>
-          <div className="space-y-3">
-            {PROVIDERS.map((provider, idx) => {
-              const isSelected = selectedProvider === provider.id;
-              return (
-                <motion.div key={provider.id}
-                  initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.05 }}
-                  onClick={() => setSelectedProvider(provider.id)}
-                  className={`relative bg-card border rounded-xl p-4 cursor-pointer transition-all hover:shadow-md ${
-                    isSelected ? 'border-aegis-accent-purple shadow-glow' :
-                    provider.isRecommended ? 'border-aegis-accent-purple/40' : 'border-border'
-                  }`}
-                >
-                  {provider.isRecommended && (
-                    <div className="absolute -top-2.5 right-4">
-                      <span className="text-[10px] bg-aegis-success-green text-white px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
-                        <Zap size={10} /> Best Rate
-                      </span>
-                    </div>
+
+          {!hasToken ? (
+            <div className="text-center py-4 text-sm text-aegis-tertiary-dark">Log in to see live provider options</div>
+          ) : providersLoading ? (
+            <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-16 rounded-xl" />)}</div>
+          ) : (
+            <div className="space-y-3">
+              {(providers ?? []).map((p: any) => (
+                <button key={p.id} onClick={() => setProvider(p.id)}
+                  className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all relative ${selectedProvider === p.id ? 'border-aegis-accent-purple bg-purple-50 dark:bg-purple-900/10' : 'border-border hover:border-aegis-accent-purple/40'}`}>
+                  {p.recommended && (
+                    <span className="absolute top-2 right-2 text-[9px] bg-aegis-success-green text-white px-1.5 py-0.5 rounded-full font-medium">Best Rate</span>
                   )}
-                  <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                      style={{ background: provider.color + '20' }}>
-                      <CreditCard size={20} style={{ color: provider.color }} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white">{provider.name}</p>
-                        <div className="flex items-center gap-0.5">
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <Star key={i} size={10} className={i < Math.floor(provider.rating) ? 'text-amber-400 fill-amber-400' : 'text-gray-300'} />
-                          ))}
-                          <span className="text-[10px] text-aegis-tertiary-dark ml-1">{provider.rating}</span>
-                        </div>
-                      </div>
-                      <p className="text-xs text-aegis-tertiary-dark">{provider.description}</p>
-                      <div className="flex items-center gap-4 mt-2">
-                        <span className="text-xs text-aegis-secondary-dark flex items-center gap-1">
-                          <Clock size={10} /> {provider.processingTime}
-                        </span>
-                        <span className="text-xs text-aegis-secondary-dark">Fee: {provider.fee}</span>
-                      </div>
-                    </div>
-                    {isSelected && <Check size={16} className="text-aegis-accent-purple flex-shrink-0 mt-1" />}
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: p.color + '22' }}>
+                    <span className="text-xs font-bold" style={{ color: p.color }}>{p.provider[0]}</span>
                   </div>
-                </motion.div>
-              );
-            })}
-          </div>
+                  <div className="flex-1 text-left">
+                    <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white">{p.provider}</p>
+                    <div className="flex items-center gap-3 mt-0.5">
+                      <span className="text-xs text-aegis-tertiary-dark flex items-center gap-1"><Clock size={10}/>{p.time}</span>
+                      <span className="text-xs text-aegis-tertiary-dark">Fee: {p.fee}</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-aegis-tertiary-dark">≈ {p.estimatedCrypto} USDT</p>
+                    {selectedProvider === p.id && <Check size={16} className="text-aegis-accent-purple ml-auto mt-1" />}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* CTA */}
-        <motion.button
-          whileTap={{ scale: 0.98 }}
-          onClick={handleLaunch}
-          disabled={!walletAddress || !selectedProvider || fiatNum <= 0 || launching}
-          className="w-full py-4 rounded-xl gradient-brand text-white font-semibold text-base flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-        >
-          {launching ? (
-            <><Loader2 size={18} className="animate-spin" /> Launching…</>
-          ) : (
-            <><ExternalLink size={18} /> Continue with {PROVIDERS.find(p => p.id === selectedProvider)?.name ?? 'Provider'}</>
-          )}
-        </motion.button>
-
-        {/* Disclaimer */}
-        <p className="text-center text-[11px] text-aegis-tertiary-dark pb-4">
-          Aegis never holds your funds. USDT is sent directly to your wallet address.
-          KYC is handled securely by the selected provider.
-        </p>
+        <button onClick={handleLaunch} disabled={!walletAddress || !selected || launching}
+          className="w-full flex items-center justify-center gap-2 py-4 bg-gradient-to-r from-aegis-accent-purple to-aegis-accent-blue text-white rounded-xl font-semibold text-base hover:opacity-90 transition-opacity disabled:opacity-50 shadow-glow">
+          {launching ? <Loader2 size={18} className="animate-spin" /> : <ExternalLink size={18} />}
+          {launching ? 'Opening…' : `Continue with ${selected?.provider ?? 'Provider'}`}
+        </button>
+        <p className="text-center text-xs text-aegis-tertiary-dark">You'll be redirected to the provider's secure page</p>
       </motion.div>
     </div>
   );
