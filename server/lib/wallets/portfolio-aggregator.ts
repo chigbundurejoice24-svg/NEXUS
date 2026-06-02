@@ -199,7 +199,7 @@ async function fetchERC20Balance(
   }
 
   try {
-    const balance = await chain.client.readContract({
+    const balance = await (chain.client.readContract as any)({
       address: tokenConfig.address,
       abi: ERC20_ABI,
       functionName: 'balanceOf',
