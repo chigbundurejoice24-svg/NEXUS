@@ -1,231 +1,220 @@
 import {
-  int,
-  mysqlEnum,
-  mysqlTable,
+  integer,
+  pgEnum,
+  pgTable,
   text,
   timestamp,
   varchar,
   json,
   bigint,
-  decimal,
+  numeric,
   index,
   uniqueIndex,
-} from "drizzle-orm/mysql-core";
+  serial,
+} from "drizzle-orm/pg-core";
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+export const roleEnum            = pgEnum("role",             ["user", "admin"]);
+export const kycStatusEnum       = pgEnum("kyc_status",       ["NONE", "PENDING", "VERIFIED", "REJECTED"]);
+export const walletTypeEnum      = pgEnum("wallet_type",      ["EMBEDDED", "EXTERNAL"]);
+export const bizMemberRoleEnum   = pgEnum("biz_member_role",  ["ADMIN", "TREASURER", "VIEWER"]);
+export const txStateEnum         = pgEnum("tx_state",         ["CREATED","QUOTED","SIMULATED","PENDING_SIGNATURE","SUBMITTED","CONFIRMED","SETTLED","FAILED","REVERSED"]);
+export const ledgerTypeEnum      = pgEnum("ledger_type",      ["ASSET","LIABILITY","EQUITY","REVENUE","EXPENSE"]);
+export const journalStatusEnum   = pgEnum("journal_status",   ["PENDING","POSTED","REVERSED"]);
 
 // ─────────────────────────────────────────────
 // USERS
 // ─────────────────────────────────────────────
-export const users = mysqlTable("users", {
-  id: int("id").autoincrement().primaryKey(),
-  openId: varchar("openId", { length: 64 }).notNull().unique(),
-  name: text("name"),
-  email: varchar("email", { length: 320 }).unique(),
-  phone: varchar("phone", { length: 32 }).unique(),
-  loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
-  credentialId: varchar("credentialId", { length: 512 }).unique(),
-  publicKey: text("publicKey"),
-  counter: int("counter").default(0).notNull(),
-  recoveryCredentialId: varchar("recoveryCredentialId", { length: 512 }),
-  recoveryWallet: varchar("recoveryWallet", { length: 42 }),
-  kycStatus: mysqlEnum("kycStatus", ["NONE", "PENDING", "VERIFIED", "REJECTED"])
-    .default("NONE")
-    .notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
+export const users = pgTable("users", {
+  id:                   serial("id").primaryKey(),
+  openId:               varchar("open_id",              { length: 64  }).notNull().unique(),
+  name:                 text("name"),
+  email:                varchar("email",                { length: 320 }).unique(),
+  phone:                varchar("phone",                { length: 32  }).unique(),
+  loginMethod:          varchar("login_method",         { length: 64  }),
+  role:                 roleEnum("role").default("user").notNull(),
+  credentialId:         varchar("credential_id",        { length: 512 }).unique(),
+  publicKey:            text("public_key"),
+  counter:              integer("counter").default(0).notNull(),
+  recoveryCredentialId: varchar("recovery_credential_id", { length: 512 }),
+  recoveryWallet:       varchar("recovery_wallet",      { length: 42  }),
+  kycStatus:            kycStatusEnum("kyc_status").default("NONE").notNull(),
+  createdAt:            timestamp("created_at").defaultNow().notNull(),
+  updatedAt:            timestamp("updated_at").defaultNow().notNull(),
+  lastSignedIn:         timestamp("last_signed_in").defaultNow().notNull(),
 });
-export type User = typeof users.$inferSelect;
-export type InsertUser = typeof users.$inferInsert;
+export type User        = typeof users.$inferSelect;
+export type InsertUser  = typeof users.$inferInsert;
 
 // ─────────────────────────────────────────────
-// LINKED WALLETS (personal, chain-aware)
+// LINKED WALLETS
 // ─────────────────────────────────────────────
-export const linkedWallets = mysqlTable("linked_wallets", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  address: varchar("address", { length: 42 }).notNull(),
-  chainId: int("chainId").notNull(),
-  type: mysqlEnum("type", ["EMBEDDED", "EXTERNAL"]).notNull(),
-  label: varchar("label", { length: 255 }),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+export const linkedWallets = pgTable("linked_wallets", {
+  id:        serial("id").primaryKey(),
+  userId:    integer("user_id").notNull(),
+  address:   varchar("address", { length: 42 }).notNull(),
+  chainId:   integer("chain_id").notNull(),
+  type:      walletTypeEnum("type").notNull(),
+  label:     varchar("label", { length: 255 }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
-export type LinkedWallet = typeof linkedWallets.$inferSelect;
+export type LinkedWallet       = typeof linkedWallets.$inferSelect;
 export type InsertLinkedWallet = typeof linkedWallets.$inferInsert;
 
 // ─────────────────────────────────────────────
 // BUSINESSES
 // ─────────────────────────────────────────────
-export const businesses = mysqlTable("businesses", {
-  id: int("id").autoincrement().primaryKey(),
-  name: varchar("name", { length: 255 }).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+export const businesses = pgTable("businesses", {
+  id:        serial("id").primaryKey(),
+  name:      varchar("name", { length: 255 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
-export type Business = typeof businesses.$inferSelect;
+export type Business       = typeof businesses.$inferSelect;
 export type InsertBusiness = typeof businesses.$inferInsert;
 
-// ─────────────────────────────────────────────
-// BUSINESS MEMBERS
-// ─────────────────────────────────────────────
-export const businessMembers = mysqlTable("business_members", {
-  id: int("id").autoincrement().primaryKey(),
-  businessId: int("businessId").notNull(),
-  userId: int("userId").notNull(),
-  role: mysqlEnum("role", ["ADMIN", "TREASURER", "VIEWER"]).notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
+export const businessMembers = pgTable("business_members", {
+  id:         serial("id").primaryKey(),
+  businessId: integer("business_id").notNull(),
+  userId:     integer("user_id").notNull(),
+  role:       bizMemberRoleEnum("role").notNull(),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
 });
-export type BusinessMember = typeof businessMembers.$inferSelect;
+export type BusinessMember       = typeof businessMembers.$inferSelect;
 export type InsertBusinessMember = typeof businessMembers.$inferInsert;
 
-// ─────────────────────────────────────────────
-// BUSINESS WALLETS
-// ─────────────────────────────────────────────
-export const businessWallets = mysqlTable("business_wallets", {
-  id: int("id").autoincrement().primaryKey(),
-  businessId: int("businessId").notNull(),
-  address: varchar("address", { length: 42 }).notNull(),
-  chainId: int("chainId").notNull(),
-  type: mysqlEnum("type", ["EMBEDDED", "EXTERNAL"]).notNull(),
-  label: varchar("label", { length: 255 }),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+export const businessWallets = pgTable("business_wallets", {
+  id:         serial("id").primaryKey(),
+  businessId: integer("business_id").notNull(),
+  address:    varchar("address", { length: 42 }).notNull(),
+  chainId:    integer("chain_id").notNull(),
+  type:       walletTypeEnum("type").notNull(),
+  label:      varchar("label", { length: 255 }),
+  createdAt:  timestamp("created_at").defaultNow().notNull(),
+  updatedAt:  timestamp("updated_at").defaultNow().notNull(),
 });
-export type BusinessWallet = typeof businessWallets.$inferSelect;
+export type BusinessWallet       = typeof businessWallets.$inferSelect;
 export type InsertBusinessWallet = typeof businessWallets.$inferInsert;
 
 // ─────────────────────────────────────────────
 // ACCOUNT AUDIT LOG
 // ─────────────────────────────────────────────
-export const accountAuditLogs = mysqlTable("account_audit_logs", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  action: varchar("action", { length: 128 }).notNull(),
-  details: json("details"),
+export const accountAuditLogs = pgTable("account_audit_logs", {
+  id:        serial("id").primaryKey(),
+  userId:    integer("user_id").notNull(),
+  action:    varchar("action", { length: 128 }).notNull(),
+  details:   json("details"),
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
-export type AccountAuditLog = typeof accountAuditLogs.$inferSelect;
+export type AccountAuditLog       = typeof accountAuditLogs.$inferSelect;
 export type InsertAccountAuditLog = typeof accountAuditLogs.$inferInsert;
 
 // ─────────────────────────────────────────────
 // TRANSACTIONS
 // ─────────────────────────────────────────────
-export const transactionStateEnum = mysqlEnum("transaction_state", [
-  "CREATED", "QUOTED", "SIMULATED", "PENDING_SIGNATURE",
-  "SUBMITTED", "CONFIRMED", "SETTLED", "FAILED", "REVERSED",
-]);
-
-export const transactions = mysqlTable(
+export const transactions = pgTable(
   "transactions",
   {
-    id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id").notNull(),
-    referenceId: varchar("reference_id", { length: 255 }).notNull(),
-    idempotencyKey: varchar("idempotency_key", { length: 255 }),
-    state: transactionStateEnum.notNull().default("CREATED"),
-    chainId: int("chain_id").notNull(),
-    wallet: varchar("wallet", { length: 42 }).notNull(),
-    recipient: varchar("recipient", { length: 42 }).notNull(),
-    amountRaw: bigint("amount_raw", { mode: "bigint" }).notNull(),
-    tokenDecimals: int("token_decimals").notNull(),
-    feeRaw: bigint("fee_raw", { mode: "bigint" }).notNull(),
-    discountBps: int("discount_bps").notNull().default(0),
-    cozanetSnapshot: varchar("cozanet_snapshot", { length: 79 }),
-    quoteExpiresAt: timestamp("quote_expires_at"),
-    requestHash: varchar("request_hash", { length: 66 }),
-    txHash: varchar("tx_hash", { length: 66 }),
-    metadata: json("metadata"),
-    riskFlags: json("risk_flags"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+    id:               serial("id").primaryKey(),
+    userId:           integer("user_id").notNull(),
+    referenceId:      varchar("reference_id",      { length: 255 }).notNull(),
+    idempotencyKey:   varchar("idempotency_key",   { length: 255 }),
+    state:            txStateEnum("state").notNull().default("CREATED"),
+    chainId:          integer("chain_id").notNull(),
+    wallet:           varchar("wallet",            { length: 42  }).notNull(),
+    recipient:        varchar("recipient",         { length: 42  }).notNull(),
+    amountRaw:        bigint("amount_raw",         { mode: "bigint" }).notNull(),
+    tokenDecimals:    integer("token_decimals").notNull(),
+    feeRaw:           bigint("fee_raw",            { mode: "bigint" }).notNull(),
+    discountBps:      integer("discount_bps").notNull().default(0),
+    cozanetSnapshot:  varchar("cozanet_snapshot",  { length: 79  }),
+    quoteExpiresAt:   timestamp("quote_expires_at"),
+    requestHash:      varchar("request_hash",      { length: 66  }),
+    txHash:           varchar("tx_hash",           { length: 66  }),
+    metadata:         json("metadata"),
+    riskFlags:        json("risk_flags"),
+    createdAt:        timestamp("created_at").defaultNow().notNull(),
+    updatedAt:        timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => ({
     idempotencyIdx: uniqueIndex("idempotency_key_idx").on(table.idempotencyKey),
-    userIdx: index("tx_user_idx").on(table.userId),
-    stateIdx: index("tx_state_idx").on(table.state),
+    userIdx:        index("tx_user_idx").on(table.userId),
+    stateIdx:       index("tx_state_idx").on(table.state),
   })
 );
-export type Transaction = typeof transactions.$inferSelect;
+export type Transaction       = typeof transactions.$inferSelect;
 export type InsertTransaction = typeof transactions.$inferInsert;
-export type TransactionState =
-  | "CREATED"
-  | "QUOTED"
-  | "SIMULATED"
-  | "PENDING_SIGNATURE"
-  | "SUBMITTED"
-  | "CONFIRMED"
-  | "SETTLED"
-  | "FAILED"
-  | "REVERSED";
+export type TransactionState  =
+  | "CREATED" | "QUOTED" | "SIMULATED" | "PENDING_SIGNATURE"
+  | "SUBMITTED" | "CONFIRMED" | "SETTLED" | "FAILED" | "REVERSED";
 
 // ─────────────────────────────────────────────
-// LEDGER ACCOUNTS (double-entry backbone)
+// LEDGER ACCOUNTS
 // ─────────────────────────────────────────────
-export const ledgerAccounts = mysqlTable("ledger_accounts", {
-  id: int("id").autoincrement().primaryKey(),
+export const ledgerAccounts = pgTable("ledger_accounts", {
+  id:          serial("id").primaryKey(),
   accountCode: varchar("account_code", { length: 100 }).notNull().unique(),
-  name: varchar("name", { length: 255 }).notNull(),
-  type: mysqlEnum("type", ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"]).notNull(),
-  assetCode: varchar("asset_code", { length: 10 }).notNull(),
-  balance: decimal("balance", { precision: 36, scale: 18 }).default("0").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+  name:        varchar("name",         { length: 255 }).notNull(),
+  type:        ledgerTypeEnum("type").notNull(),
+  assetCode:   varchar("asset_code",   { length: 10  }).notNull(),
+  balance:     numeric("balance",      { precision: 36, scale: 18 }).default("0").notNull(),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+  updatedAt:   timestamp("updated_at").defaultNow().notNull(),
 });
 export type LedgerAccount = typeof ledgerAccounts.$inferSelect;
 
 // ─────────────────────────────────────────────
-// JOURNAL ENTRIES (one per settlement event)
+// JOURNAL ENTRIES
 // ─────────────────────────────────────────────
-export const journalEntries = mysqlTable("journal_entries", {
-  id: int("id").autoincrement().primaryKey(),
-  referenceId: varchar("reference_id", { length: 255 }).notNull(),
-  reversalOfId: int("reversal_of_id"),
-  chainId: int("chain_id"),
-  wallet: varchar("wallet", { length: 42 }),
-  txHash: varchar("tx_hash", { length: 66 }),
-  createdBy: varchar("created_by", { length: 100 }),
-  description: varchar("description", { length: 500 }),
-  status: mysqlEnum("status", ["PENDING", "POSTED", "REVERSED"]).default("POSTED").notNull(),
-  postedAt: timestamp("posted_at").defaultNow().notNull(),
-  reversedAt: timestamp("reversed_at"),
+export const journalEntries = pgTable("journal_entries", {
+  id:           serial("id").primaryKey(),
+  referenceId:  varchar("reference_id", { length: 255 }).notNull(),
+  reversalOfId: integer("reversal_of_id"),
+  chainId:      integer("chain_id"),
+  wallet:       varchar("wallet",       { length: 42  }),
+  txHash:       varchar("tx_hash",      { length: 66  }),
+  createdBy:    varchar("created_by",   { length: 100 }),
+  description:  varchar("description",  { length: 500 }),
+  status:       journalStatusEnum("status").default("POSTED").notNull(),
+  postedAt:     timestamp("posted_at").defaultNow().notNull(),
+  reversedAt:   timestamp("reversed_at"),
 });
 export type JournalEntry = typeof journalEntries.$inferSelect;
 
-// ─────────────────────────────────────────────
-// JOURNAL LINES (debit / credit legs)
-// ─────────────────────────────────────────────
-export const journalLines = mysqlTable("journal_lines", {
-  id: int("id").autoincrement().primaryKey(),
-  journalEntryId: int("journal_entry_id").notNull(),
-  accountId: int("account_id").notNull(),
-  debit: decimal("debit", { precision: 36, scale: 18 }).default("0").notNull(),
-  credit: decimal("credit", { precision: 36, scale: 18 }).default("0").notNull(),
+export const journalLines = pgTable("journal_lines", {
+  id:             serial("id").primaryKey(),
+  journalEntryId: integer("journal_entry_id").notNull(),
+  accountId:      integer("account_id").notNull(),
+  debit:          numeric("debit",  { precision: 36, scale: 18 }).default("0").notNull(),
+  credit:         numeric("credit", { precision: 36, scale: 18 }).default("0").notNull(),
 });
 export type JournalLine = typeof journalLines.$inferSelect;
 
 // ─────────────────────────────────────────────
-// IDEMPOTENCY KEYS (prevent duplicate ops)
+// IDEMPOTENCY KEYS
 // ─────────────────────────────────────────────
-export const idempotencyKeys = mysqlTable("idempotency_keys", {
-  id: int("id").autoincrement().primaryKey(),
-  key: varchar("key", { length: 255 }).notNull().unique(),
+export const idempotencyKeys = pgTable("idempotency_keys", {
+  id:          serial("id").primaryKey(),
+  key:         varchar("key",          { length: 255 }).notNull().unique(),
   referenceId: varchar("reference_id", { length: 255 }).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
 });
 export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;
 
 // ─────────────────────────────────────────────
-// LEGACY — backwards compat
+// LEGACY SHIM
 // ─────────────────────────────────────────────
-export const userWallets = mysqlTable("user_wallets", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  address: varchar("address", { length: 42 }).notNull(),
-  label: varchar("label", { length: 255 }),
-  isActive: mysqlEnum("isActive", ["true", "false"]).default("true").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+export const userWallets = pgTable("user_wallets", {
+  id:        serial("id").primaryKey(),
+  userId:    integer("user_id").notNull(),
+  address:   varchar("address", { length: 42 }).notNull(),
+  label:     varchar("label",   { length: 255 }),
+  isActive:  varchar("is_active", { length: 8 }).default("true").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
-export type UserWallet = typeof userWallets.$inferSelect;
+export type UserWallet       = typeof userWallets.$inferSelect;
 export type InsertUserWallet = typeof userWallets.$inferInsert;
