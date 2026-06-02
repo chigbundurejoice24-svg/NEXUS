@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {
   LayoutDashboard, Wallet, Send, Download, PlusCircle,
   Receipt, ArrowLeftRight, TrendingUp, Sparkles, Gift,
-  Settings, Code, ShieldCheck, ChevronLeft, Sun, Moon, Loader2, ShieldCheck,
+  Settings, Code, ShieldCheck, ChevronLeft, Sun, Moon, Loader2,
 } from "lucide-react";
 import { navItems } from "@/data/mockData";
 import { useCozanetStatus } from "@/hooks/useCozanetStatus";
