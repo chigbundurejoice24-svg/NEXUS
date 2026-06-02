@@ -5,14 +5,16 @@ import { portfolioRouter } from "./routers/portfolio";
 import { walletsRouter } from "./routers/wallets";
 import { accountsRouter } from "./routers/accounts";
 import { transactionsRouter } from "./routers/transactions";
+import { cozanetRouter } from "./routers/cozanet";
 
 export const appRouter = router({
   system:       systemRouter,
-  auth:         authRouter,       // register / login / me / logout
+  auth:         authRouter,
   portfolio:    portfolioRouter,
   wallets:      walletsRouter,
   accounts:     accountsRouter,
   transactions: transactionsRouter,
+  cozanet:      cozanetRouter,   // live price, Points, discount tier
 });
 
 export type AppRouter = typeof appRouter;
