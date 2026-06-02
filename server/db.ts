@@ -1,7 +1,13 @@
+/**
+ * db.ts — Drizzle database client (lazy connection)
+ *
+ * getDb() returns the drizzle client, or null if DATABASE_URL is not set.
+ * All DB operations are lazy so the server boots without a DB configured.
+ */
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, userWallets, type UserWallet } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import { users } from "../drizzle/schema";
+import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -18,170 +24,44 @@ export async function getDb() {
   return _db;
 }
 
-export async function upsertUser(user: InsertUser): Promise<void> {
-  if (!user.openId) {
-    throw new Error("User openId is required for upsert");
-  }
-
+// ── User helpers used by sdk.ts ───────────────────────────────────────────────
+export async function getUserByOpenId(openId: string) {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot upsert user: database not available");
-    return;
-  }
+  if (!db) return undefined;
+  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  return result[0] ?? undefined;
+}
+
+export async function upsertUser(params: {
+  openId: string;
+  name?: string | null;
+  email?: string | null;
+  loginMethod?: string | null;
+  role?: "user" | "admin";
+  lastSignedIn?: Date;
+}) {
+  const db = await getDb();
+  if (!db) { console.warn("[Database] Cannot upsert user: database not available"); return; }
+
+  const role = params.role ?? (params.openId === ENV.ownerOpenId ? "admin" : "user");
 
   try {
-    const values: InsertUser = {
-      openId: user.openId,
-    };
-    const updateSet: Record<string, unknown> = {};
-
-    const textFields = ["name", "email", "loginMethod"] as const;
-    type TextField = (typeof textFields)[number];
-
-    const assignNullable = (field: TextField) => {
-      const value = user[field];
-      if (value === undefined) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
-
-    textFields.forEach(assignNullable);
-
-    if (user.lastSignedIn !== undefined) {
-      values.lastSignedIn = user.lastSignedIn;
-      updateSet.lastSignedIn = user.lastSignedIn;
-    }
-    if (user.role !== undefined) {
-      values.role = user.role;
-      updateSet.role = user.role;
-    } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
-    }
-
-    if (!values.lastSignedIn) {
-      values.lastSignedIn = new Date();
-    }
-
-    if (Object.keys(updateSet).length === 0) {
-      updateSet.lastSignedIn = new Date();
-    }
-
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
-      set: updateSet,
+    await db.insert(users).values({
+      openId:       params.openId,
+      name:         params.name ?? null,
+      email:        params.email ?? null,
+      loginMethod:  params.loginMethod ?? null,
+      role,
+      lastSignedIn: params.lastSignedIn ?? new Date(),
+    }).onDuplicateKeyUpdate({
+      set: {
+        name:         params.name ?? undefined,
+        email:        params.email ?? undefined,
+        lastSignedIn: params.lastSignedIn ?? new Date(),
+      },
     });
   } catch (error) {
     console.error("[Database] Failed to upsert user:", error);
     throw error;
   }
-}
-
-export async function getUserByOpenId(openId: string) {
-  const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
-  }
-
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-
-  return result.length > 0 ? result[0] : undefined;
-}
-
-// ------------------------------------------------------------------
-// Wallet Management Queries
-// ------------------------------------------------------------------
-
-export async function addUserWallet(userId: number, address: string, label?: string): Promise<UserWallet> {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  // Normalize address to lowercase
-  const normalizedAddress = address.toLowerCase();
-
-  await db.insert(userWallets).values({
-    userId,
-    address: normalizedAddress,
-    label: label || null,
-    isActive: 'true',
-  });
-
-  // Return the inserted wallet by querying the most recent entry
-  const inserted = await db
-    .select()
-    .from(userWallets)
-    .where(eq(userWallets.userId, userId))
-    .orderBy(userWallets.createdAt)
-    .limit(1);
-
-  if (!inserted.length) {
-    throw new Error("Failed to retrieve inserted wallet");
-  }
-
-  return inserted[0];
-}
-
-export async function getUserWallets(userId: number): Promise<UserWallet[]> {
-  const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get wallets: database not available");
-    return [];
-  }
-
-  return db
-    .select()
-    .from(userWallets)
-    .where(eq(userWallets.userId, userId));
-}
-
-export async function removeUserWallet(walletId: number, userId: number): Promise<boolean> {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  // Ensure user owns this wallet
-  const wallet = await db
-    .select()
-    .from(userWallets)
-    .where(eq(userWallets.id, walletId))
-    .limit(1);
-
-  if (!wallet.length || wallet[0].userId !== userId) {
-    throw new Error("Wallet not found or unauthorized");
-  }
-
-  await db.delete(userWallets).where(eq(userWallets.id, walletId));
-  return true;
-}
-
-export async function updateWalletLabel(walletId: number, userId: number, label: string): Promise<UserWallet> {
-  const db = await getDb();
-  if (!db) {
-    throw new Error("Database not available");
-  }
-
-  // Ensure user owns this wallet
-  const wallet = await db
-    .select()
-    .from(userWallets)
-    .where(eq(userWallets.id, walletId))
-    .limit(1);
-
-  if (!wallet.length || wallet[0].userId !== userId) {
-    throw new Error("Wallet not found or unauthorized");
-  }
-
-  await db.update(userWallets).set({ label }).where(eq(userWallets.id, walletId));
-
-  const updated = await db
-    .select()
-    .from(userWallets)
-    .where(eq(userWallets.id, walletId))
-    .limit(1);
-
-  return updated[0];
 }
