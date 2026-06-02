@@ -1,19 +1,15 @@
 /**
  * useAuth.ts
- * Returns the currently authenticated user from tRPC auth.me.
- * Returns null gracefully when backend is not reachable.
+ * Returns the current authenticated user.
  */
 import { trpc } from "../lib/trpc";
+import type { TrpcUser } from "../lib/app-router-type";
 
 export function useCurrentUser() {
-  const { data: user, isLoading, error } = trpc.auth.me.useQuery(undefined, {
+  const { data, isLoading, error } = trpc.auth.me.useQuery(undefined, {
     retry: false,
     staleTime: 60_000,
   });
-  return {
-    user: user ?? null,
-    isLoading,
-    isAuthenticated: !!user,
-    error,
-  };
+  const user = (data as TrpcUser | null | undefined) ?? null;
+  return { user, isLoading, isAuthenticated: !!user, error };
 }
