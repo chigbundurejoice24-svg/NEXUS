@@ -1,20 +1,18 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   Eye, EyeOff, Plus, Send, Download, Wallet,
-  Trash2, PencilLine, Check, X, Loader2, RefreshCw,
+  Trash2, PencilLine, Check, X, Loader2,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useWalletStore } from "@/hooks/useWalletStore";
-// isAddress with strict:false accepts lowercase EVM addresses
-const isValidAddress = (addr: string) => /^0x[0-9a-fA-F]{40}$/.test(addr);
 
 const NGN_PER_USD = 1595.20;
 
 const NETWORK_LABELS: Record<string, string> = {
   ethereum: "Ethereum",
-  bsc:      "BNB Chain",
-  polygon:  "Polygon",
+  bsc: "BNB Chain",
+  polygon: "Polygon",
   arbitrum: "Arbitrum",
 };
 
@@ -24,19 +22,34 @@ export default function Wallets() {
 
   const [showBalances, setShowBalances] = useState(true);
   const [addingWallet, setAddingWallet] = useState(false);
-  const [newAddress, setNewAddress] = useState("");
-  const [newLabel, setNewLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
 
+  // Use uncontrolled refs to avoid React state timing issues with input values
+  const addressRef = useRef<HTMLInputElement>(null);
+  const labelRef = useRef<HTMLInputElement>(null);
+
   function handleAdd() {
     setError(null);
-    const err = add(newAddress.trim(), newLabel.trim() || "My Wallet");
-    if (err) { setError(err); return; }
+    const address = addressRef.current?.value?.trim() ?? "";
+    const label = labelRef.current?.value?.trim() ?? "";
+
+    if (!address) {
+      setError("Please enter a wallet address");
+      return;
+    }
+
+    const err = add(address, label || "My Wallet");
+    if (err) {
+      setError(err);
+      return;
+    }
+
+    // Success — close form and clear
     setAddingWallet(false);
-    setNewAddress("");
-    setNewLabel("");
+    if (addressRef.current) addressRef.current.value = "";
+    if (labelRef.current) labelRef.current.value = "";
   }
 
   return (
@@ -61,7 +74,7 @@ export default function Wallets() {
         </div>
       </div>
 
-      {/* Add wallet form */}
+      {/* Add wallet form — uncontrolled inputs via ref */}
       {addingWallet && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
@@ -70,28 +83,25 @@ export default function Wallets() {
         >
           <h3 className="text-sm font-semibold text-aegis-primary-dark dark:text-white">Connect EVM Wallet</h3>
           <input
+            ref={addressRef}
             type="text"
+            defaultValue=""
             placeholder="0x... wallet address"
-            value={newAddress}
-            onChange={(e) => setNewAddress(e.target.value)}
             autoFocus
             className="w-full px-3 py-2.5 rounded-lg border border-border bg-aegis-bg-elevated text-sm font-mono text-aegis-primary-dark dark:text-white placeholder:text-aegis-tertiary-dark focus:outline-none focus:ring-2 focus:ring-aegis-accent-purple/30"
           />
           <input
+            ref={labelRef}
             type="text"
+            defaultValue=""
             placeholder="Label (optional — e.g. Main Wallet)"
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
             className="w-full px-3 py-2.5 rounded-lg border border-border bg-aegis-bg-elevated text-sm text-aegis-primary-dark dark:text-white placeholder:text-aegis-tertiary-dark focus:outline-none focus:ring-2 focus:ring-aegis-accent-purple/30"
           />
-          {newAddress && !isValidAddress(newAddress) && (
-            <p className="text-xs text-yellow-500">Address looks invalid — must be 0x + 40 hex chars</p>
-          )}
           {error && <p className="text-xs text-red-500">{error}</p>}
           <div className="flex gap-2">
             <button
               onClick={handleAdd}
-              className="flex-1 py-2 gradient-brand text-white rounded-lg text-sm font-medium"
+              className="flex-1 py-2 gradient-brand text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
             >
               Connect
             </button>
@@ -107,12 +117,18 @@ export default function Wallets() {
 
       {/* Total balance */}
       <div className="bg-card border border-border rounded-xl p-6">
-        <p className="text-xs font-medium text-aegis-tertiary-dark uppercase tracking-wider mb-1">Total Portfolio Value</p>
+        <p className="text-xs font-medium text-aegis-tertiary-dark uppercase tracking-wider mb-1">
+          Total Portfolio Value
+        </p>
         <h2 className="text-3xl font-semibold text-aegis-primary-dark dark:text-white">
-          {showBalances ? `$${totalUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "••••••"}
+          {showBalances
+            ? `$${totalUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+            : "••••••"}
         </h2>
         <p className="text-sm text-aegis-secondary-dark mt-1">
-          {showBalances ? `≈ ₦${totalNgn.toLocaleString("en-US", { minimumFractionDigits: 2 })} NGN` : "••••••"}
+          {showBalances
+            ? `≈ ₦${totalNgn.toLocaleString("en-US", { minimumFractionDigits: 2 })} NGN`
+            : "••••••"}
         </p>
         <p className="text-sm text-aegis-tertiary-dark mt-1">
           {wallets.length} wallet{wallets.length !== 1 ? "s" : ""} connected
@@ -158,7 +174,9 @@ export default function Wallets() {
                       <div className="min-w-0">
                         {isEditing ? (
                           <div className="flex items-center gap-1">
-                            <input autoFocus value={editLabel}
+                            <input
+                              autoFocus
+                              value={editLabel}
                               onChange={(e) => setEditLabel(e.target.value)}
                               className="text-sm font-semibold bg-transparent border-b border-aegis-accent-purple focus:outline-none text-aegis-primary-dark dark:text-white w-28"
                             />
@@ -176,12 +194,16 @@ export default function Wallets() {
                       </div>
                     </div>
                     <div className="flex gap-1">
-                      <button onClick={() => { setEditingId(w.id); setEditLabel(w.label); }}
-                        className="p-1.5 rounded-lg hover:bg-aegis-bg-elevated transition-colors">
+                      <button
+                        onClick={() => { setEditingId(w.id); setEditLabel(w.label); }}
+                        className="p-1.5 rounded-lg hover:bg-aegis-bg-elevated transition-colors"
+                      >
                         <PencilLine size={13} className="text-aegis-tertiary-dark" />
                       </button>
-                      <button onClick={() => remove(w.id)}
-                        className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                      <button
+                        onClick={() => remove(w.id)}
+                        className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                      >
                         <Trash2 size={13} className="text-red-400" />
                       </button>
                     </div>
@@ -197,43 +219,56 @@ export default function Wallets() {
                     ) : (
                       <>
                         <p className="text-2xl font-semibold text-aegis-primary-dark dark:text-white">
-                          {showBalances ? `$${w.balanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "••••••"}
+                          {showBalances
+                            ? `$${w.balanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+                            : "••••••"}
                         </p>
                         <p className="text-sm text-aegis-secondary-dark mt-0.5">
-                          {showBalances ? `≈ ₦${(w.balanceUsd * NGN_PER_USD).toLocaleString("en-US", { minimumFractionDigits: 2 })}` : "••••••"}
+                          {showBalances
+                            ? `≈ ₦${(w.balanceUsd * NGN_PER_USD).toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+                            : "••••••"}
                         </p>
                       </>
                     )}
                   </div>
 
                   {/* Address */}
-                  <div className="flex items-center gap-2 p-2 bg-aegis-bg-elevated rounded-lg mb-4">
+                  <div className="flex items-center gap-2 p-2 bg-aegis-bg-elevated rounded-lg mb-3">
                     <p className="text-xs text-aegis-tertiary-dark font-mono truncate">{w.address}</p>
                   </div>
 
                   {/* Asset breakdown */}
                   {w.assets.length > 0 && (
                     <div className="mb-3 space-y-1">
-                      {w.assets.slice(0, 4).map((a) => (
+                      {w.assets.slice(0, 5).map((a) => (
                         <div key={`${a.network}:${a.symbol}`} className="flex items-center justify-between text-xs">
-                          <span className="text-aegis-tertiary-dark">{a.symbol} ({NETWORK_LABELS[a.network] ?? a.network})</span>
-                          <span className="text-aegis-secondary-dark font-medium">${a.balanceUsd.toFixed(2)}</span>
+                          <span className="text-aegis-tertiary-dark">
+                            {a.symbol} ({NETWORK_LABELS[a.network] ?? a.network})
+                          </span>
+                          <span className="font-medium text-aegis-secondary-dark">
+                            ${a.balanceUsd.toFixed(2)}
+                          </span>
                         </div>
                       ))}
-                      {w.assets.length === 0 && !w.loading && (
-                        <p className="text-xs text-aegis-tertiary-dark">No token balances found</p>
-                      )}
                     </div>
+                  )}
+
+                  {!w.loading && w.assets.length === 0 && (
+                    <p className="text-xs text-aegis-tertiary-dark mb-3">No token balances found on-chain</p>
                   )}
 
                   {/* Actions */}
                   <div className="flex gap-2">
-                    <button onClick={() => navigate("/send")}
-                      className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg border border-border hover:bg-aegis-bg-elevated transition-colors text-aegis-primary-dark dark:text-white">
+                    <button
+                      onClick={() => navigate("/send")}
+                      className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg border border-border hover:bg-aegis-bg-elevated transition-colors text-aegis-primary-dark dark:text-white"
+                    >
                       <Send size={14} /> Send
                     </button>
-                    <button onClick={() => navigate("/receive")}
-                      className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg border border-border hover:bg-aegis-bg-elevated transition-colors text-aegis-primary-dark dark:text-white">
+                    <button
+                      onClick={() => navigate("/receive")}
+                      className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg border border-border hover:bg-aegis-bg-elevated transition-colors text-aegis-primary-dark dark:text-white"
+                    >
                       <Download size={14} /> Receive
                     </button>
                   </div>
