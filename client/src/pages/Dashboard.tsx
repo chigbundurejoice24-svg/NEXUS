@@ -9,9 +9,8 @@ import {
 } from "@/data/mockData";
 import { useState } from "react";
 import { useWalletStore } from "@/hooks/useWalletStore";
+import { useNgnRate } from "@/hooks/useNgnRate";
 import { useCurrentUser } from "@/hooks/useAuth";
-
-const NGN_PER_USD = 1595.20;
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -19,6 +18,7 @@ export default function Dashboard() {
   const { wallets, totalUsd, totalNgn } = useWalletStore();
 
   const hasRealWallets = wallets.length > 0;
+  const { rate: NGN_PER_USD } = useNgnRate();
   const { user } = useCurrentUser();
   const firstName = (user as any)?.name?.split(" ")[0] ?? userProfile.name.split(" ")[0];
 
