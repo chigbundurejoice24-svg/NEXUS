@@ -17,5 +17,6 @@
       "@/*": ["client/src/*"]
     }
   },
-  "include": ["client/src"]
+  "include": ["client/src"],
+  "exclude": ["server", "drizzle", "shared", "node_modules", "dist"]
 }
