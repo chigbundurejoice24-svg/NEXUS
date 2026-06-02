@@ -1,9 +1,10 @@
 /**
  * useWallets.ts
- * Fetches linked wallets + live enriched portfolio via tRPC.
- * Falls back gracefully when the backend is not reachable.
+ * Fetches linked wallets and live portfolio data via tRPC.
+ * Falls back gracefully when backend is offline.
  */
 import { trpc } from "../lib/trpc";
+import type { LinkedWalletRecord } from "../lib/app-router-type";
 
 export function useWallets() {
   const walletsQuery = trpc.accounts.myWallets.useQuery(undefined, {
@@ -11,29 +12,31 @@ export function useWallets() {
     staleTime: 30_000,
   });
 
-  const addresses = (walletsQuery.data ?? []).map((w) => ({
+  const linked: LinkedWalletRecord[] = walletsQuery.data ?? [];
+
+  const addresses = linked.map((w) => ({
     address: w.address as `0x${string}`,
     label: w.label ?? undefined,
   }));
 
   const portfolioQuery = trpc.portfolio.getAggregated.useQuery(
     { wallets: addresses },
-    { enabled: addresses.length > 0, staleTime: 30_000 }
+    { enabled: addresses.length > 0, staleTime: 30_000, retry: false }
   );
 
   const totalValueQuery = trpc.portfolio.getTotalValue.useQuery(
     { wallets: addresses },
-    { enabled: addresses.length > 0, staleTime: 30_000 }
+    { enabled: addresses.length > 0, staleTime: 30_000, retry: false }
   );
 
   return {
-    linkedWallets: walletsQuery.data ?? [],
+    linkedWallets: linked,
     linkedWalletsLoading: walletsQuery.isLoading,
     linkedWalletsError: walletsQuery.error,
-    portfolio: portfolioQuery.data?.data ?? null,
+    portfolio: (portfolioQuery.data as any)?.data ?? null,
     portfolioLoading: portfolioQuery.isLoading,
     portfolioError: portfolioQuery.error,
-    totalValueUsd: totalValueQuery.data?.totalValueUsd ?? "0",
-    totalWallets: totalValueQuery.data?.totalWallets ?? 0,
+    totalValueUsd: (totalValueQuery.data as any)?.totalValueUsd ?? "0",
+    totalWallets: (totalValueQuery.data as any)?.totalWallets ?? 0,
   };
 }
