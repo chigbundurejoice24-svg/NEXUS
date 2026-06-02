@@ -1,35 +1,43 @@
-import { useLocation, useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { useLocation, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 import {
   LayoutDashboard, Wallet, Send, Download, PlusCircle,
   Receipt, ArrowLeftRight, TrendingUp, Sparkles, Gift,
-  Settings, Code, ChevronLeft, Sun, Moon
-} from 'lucide-react'
-import { navItems } from '@/data/mockData'
+  Settings, Code, ChevronLeft, Sun, Moon, Loader2,
+} from "lucide-react";
+import { navItems } from "@/data/mockData";
+import { useCozanetStatus } from "@/hooks/useCozanetStatus";
+import { useCurrentUser } from "@/hooks/useAuth";
 
 const iconMap: Record<string, React.ElementType> = {
   LayoutDashboard, Wallet, Send, Download, PlusCircle,
   Receipt, ArrowLeftRight, TrendingUp, Sparkles, Gift,
   Settings, Code,
-}
+};
 
 interface SidebarProps {
-  collapsed: boolean
-  onToggle: () => void
-  darkMode: boolean
-  onDarkModeToggle: () => void
-  mobile?: boolean
+  collapsed: boolean;
+  onToggle: () => void;
+  darkMode: boolean;
+  onDarkModeToggle: () => void;
+  mobile?: boolean;
 }
 
-export default function Sidebar({ collapsed, onToggle, darkMode, onDarkModeToggle, mobile }: SidebarProps) {
-  const location = useLocation()
-  const navigate = useNavigate()
+export default function Sidebar({
+  collapsed, onToggle, darkMode, onDarkModeToggle, mobile,
+}: SidebarProps) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { user } = useCurrentUser();
+  const {
+    priceUsd, pointsBalance, discountPercent, isLoading: cznLoading,
+  } = useCozanetStatus();
 
   return (
     <motion.aside
       initial={false}
       animate={{ width: collapsed && !mobile ? 72 : 260 }}
-      transition={{ duration: 0.25, ease: 'easeInOut' }}
+      transition={{ duration: 0.25, ease: "easeInOut" }}
       className="h-full bg-aegis-bg-sidebar border-r border-border flex flex-col relative"
     >
       {/* Logo */}
@@ -61,48 +69,69 @@ export default function Sidebar({ collapsed, onToggle, darkMode, onDarkModeToggl
           >
             <ChevronLeft
               size={14}
-              className={`transition-transform duration-200 ${collapsed ? 'rotate-180' : ''}`}
+              className={`transition-transform duration-200 ${collapsed ? "rotate-180" : ""}`}
             />
           </button>
         )}
       </div>
 
-      {/* Cozanet Token Price */}
+      {/* Cozanet Token Card — live data */}
       {!collapsed && (
         <div className="mx-3 mt-3 p-3 rounded-xl bg-white dark:bg-card border border-border">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-full gradient-brand flex items-center justify-center">
+            <div className="w-7 h-7 rounded-full gradient-brand flex items-center justify-center flex-shrink-0">
               <span className="text-white text-[10px] font-bold">CZ</span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-aegis-primary-dark dark:text-white truncate">Cozanet Token (COZ)</p>
-              <p className="text-xs text-aegis-secondary-dark">${cozanetToken.price}</p>
+              <p className="text-xs font-medium text-aegis-primary-dark dark:text-white truncate">
+                Cozanet Token (CZN)
+              </p>
+              {cznLoading ? (
+                <Loader2 size={10} className="animate-spin text-aegis-tertiary-dark mt-0.5" />
+              ) : (
+                <p className="text-xs text-aegis-secondary-dark">
+                  ${priceUsd > 0 ? priceUsd.toFixed(4) : "—"}
+                </p>
+              )}
             </div>
-            <span className="text-[10px] font-medium text-aegis-success-green bg-aegis-success-green/10 px-1.5 py-0.5 rounded-full">
-              +{cozanetToken.change24h}%
-            </span>
+            {/* Discount badge — only when logged in and holding CZN */}
+            {user && discountPercent > 0 && (
+              <span className="text-[10px] font-medium text-aegis-success-green bg-aegis-success-green/10 px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
+                {discountPercent}% off
+              </span>
+            )}
           </div>
+
+          {/* Points row — only when authenticated */}
+          {user && !cznLoading && (
+            <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between">
+              <span className="text-[10px] text-aegis-tertiary-dark">Your Points</span>
+              <span className="text-[11px] font-semibold text-aegis-primary-dark dark:text-white">
+                {parseFloat(pointsBalance).toLocaleString()} CZN
+              </span>
+            </div>
+          )}
         </div>
       )}
 
       {/* Navigation */}
       <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto scrollbar-thin">
         {navItems.map((item) => {
-          const Icon = iconMap[item.icon]
-          const isActive = location.pathname === item.href
-
+          const Icon = iconMap[item.icon];
+          const isActive = location.pathname === item.href;
           return (
             <button
               key={item.id}
               onClick={() => {
-                navigate(item.href)
-                if (mobile) onToggle()
+                navigate(item.href);
+                if (mobile) onToggle();
               }}
               className={`
-                w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 relative group
+                w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
+                transition-all duration-200 relative group
                 ${isActive
-                  ? 'bg-aegis-bg-elevated text-aegis-accent-purple'
-                  : 'text-aegis-secondary-dark hover:text-aegis-primary-dark hover:bg-aegis-bg-elevated/50 dark:hover:text-white'
+                  ? "bg-aegis-bg-elevated text-aegis-accent-purple"
+                  : "text-aegis-secondary-dark hover:text-aegis-primary-dark hover:bg-aegis-bg-elevated/50 dark:hover:text-white"
                 }
               `}
             >
@@ -110,26 +139,20 @@ export default function Sidebar({ collapsed, onToggle, darkMode, onDarkModeToggl
                 <motion.div
                   layoutId="sidebar-active"
                   className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-aegis-accent-purple"
-                  transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 30 }}
                 />
               )}
               {Icon && (
-                <Icon
-                  size={20}
-                  strokeWidth={isActive ? 2.5 : 1.5}
-                  className="flex-shrink-0"
-                />
+                <Icon size={20} strokeWidth={isActive ? 2.5 : 1.5} className="flex-shrink-0" />
               )}
-              {!collapsed && (
-                <span className="truncate">{item.label}</span>
-              )}
+              {!collapsed && <span className="truncate">{item.label}</span>}
               {!collapsed && item.badge && (
                 <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-aegis-bg-elevated text-aegis-tertiary-dark font-medium">
                   {item.badge}
                 </span>
               )}
             </button>
-          )
+          );
         })}
       </nav>
 
@@ -137,10 +160,14 @@ export default function Sidebar({ collapsed, onToggle, darkMode, onDarkModeToggl
       {!collapsed && (
         <div className="px-4 py-3 border-t border-border">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-[10px] font-medium text-aegis-tertiary-dark uppercase tracking-wider">Account Level</span>
+            <span className="text-[10px] font-medium text-aegis-tertiary-dark uppercase tracking-wider">
+              Account Level
+            </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-aegis-primary-dark dark:text-white">Premium</span>
+            <span className="text-sm font-semibold text-aegis-primary-dark dark:text-white">
+              {user ? "Premium" : "Guest"}
+            </span>
             <div className="w-5 h-5 rounded-full gradient-brand flex items-center justify-center">
               <Sparkles size={10} className="text-white" />
             </div>
@@ -149,7 +176,7 @@ export default function Sidebar({ collapsed, onToggle, darkMode, onDarkModeToggl
             <div className="flex-1 h-1.5 bg-aegis-bg-elevated rounded-full overflow-hidden">
               <div
                 className="h-full gradient-brand rounded-full transition-all"
-                style={{ width: '78%' }}
+                style={{ width: "78%" }}
               />
             </div>
             <span className="text-[10px] text-aegis-tertiary-dark">780/1000 XP</span>
@@ -167,15 +194,14 @@ export default function Sidebar({ collapsed, onToggle, darkMode, onDarkModeToggl
             dark:hover:text-white transition-all duration-200
           `}
         >
-          {darkMode ? <Sun size={20} strokeWidth={1.5} /> : <Moon size={20} strokeWidth={1.5} />}
-          {!collapsed && <span>{darkMode ? 'Light Mode' : 'Dark Mode'}</span>}
+          {darkMode ? (
+            <Sun size={20} strokeWidth={1.5} />
+          ) : (
+            <Moon size={20} strokeWidth={1.5} />
+          )}
+          {!collapsed && <span>{darkMode ? "Light Mode" : "Dark Mode"}</span>}
         </button>
       </div>
     </motion.aside>
-  )
-}
-
-const cozanetToken = {
-  price: 0.842,
-  change24h: 6.21,
+  );
 }
