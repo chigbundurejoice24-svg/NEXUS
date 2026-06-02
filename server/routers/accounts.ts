@@ -115,7 +115,14 @@ export const accountsRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       const userId = requireAuth(ctx.user?.id);
-      const wallet = await addBusinessWallet({ ...input, requesterUserId: userId });
+      const wallet = await addBusinessWallet({
+        requesterUserId: userId,
+        businessId: input.businessId,
+        address: input.address,
+        chainId: input.chainId,
+        type: input.type,
+        label: input.label,
+      });
       return { success: true, wallet };
     }),
 
