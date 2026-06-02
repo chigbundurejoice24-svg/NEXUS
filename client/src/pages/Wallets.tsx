@@ -6,7 +6,8 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useWalletStore } from "@/hooks/useWalletStore";
-import { isAddress } from "viem";
+// isAddress with strict:false accepts lowercase EVM addresses
+const isValidAddress = (addr: string) => /^0x[0-9a-fA-F]{40}$/.test(addr);
 
 const NGN_PER_USD = 1595.20;
 
@@ -83,7 +84,7 @@ export default function Wallets() {
             onChange={(e) => setNewLabel(e.target.value)}
             className="w-full px-3 py-2.5 rounded-lg border border-border bg-aegis-bg-elevated text-sm text-aegis-primary-dark dark:text-white placeholder:text-aegis-tertiary-dark focus:outline-none focus:ring-2 focus:ring-aegis-accent-purple/30"
           />
-          {newAddress && !isAddress(newAddress) && (
+          {newAddress && !isValidAddress(newAddress) && (
             <p className="text-xs text-yellow-500">Address looks invalid — must be 0x + 40 hex chars</p>
           )}
           {error && <p className="text-xs text-red-500">{error}</p>}
