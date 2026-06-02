@@ -14,7 +14,7 @@ import {
   type StoredWallet,
   type WalletWithBalance,
 } from "../lib/wallet-store";
-import { isAddress } from "viem";
+const isValidAddress = (addr: string) => /^0x[0-9a-fA-F]{40}$/.test(addr);
 
 const NGN_PER_USD = 1595.20;
 
@@ -66,7 +66,7 @@ export function useWalletStore() {
   }, [wallets, prices, pricesLoading]);
 
   const add = useCallback((address: string, label: string): string | null => {
-    if (!isAddress(address)) return "Invalid Ethereum address";
+    if (!isValidAddress(address)) return "Invalid Ethereum address";
     const w = addWallet(address, label);
     setWallets(loadWallets());
     return null; // no error
