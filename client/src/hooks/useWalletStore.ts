@@ -14,11 +14,12 @@ import {
   type StoredWallet,
   type WalletWithBalance,
 } from "../lib/wallet-store";
+import { useNgnRate } from "./useNgnRate";
+
 const isValidAddress = (addr: string) => /^0x[0-9a-fA-F]{40}$/.test(addr);
 
-const NGN_PER_USD = 1595.20;
-
 export function useWalletStore() {
+  const { rate: NGN_PER_USD } = useNgnRate();
   const [wallets, setWallets] = useState<StoredWallet[]>([]);
   const [balances, setBalances] = useState<Record<string, WalletWithBalance>>({});
   const [prices, setPrices] = useState({ eth: 3200, bnb: 580, matic: 0.85 });
