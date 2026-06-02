@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {
   LayoutDashboard, Wallet, Send, Download, PlusCircle,
   Receipt, ArrowLeftRight, TrendingUp, Sparkles, Gift,
-  Settings, Code, ChevronLeft, Sun, Moon, Loader2,
+  Settings, Code, ShieldCheck, ChevronLeft, Sun, Moon, Loader2, ShieldCheck,
 } from "lucide-react";
 import { navItems } from "@/data/mockData";
 import { useCozanetStatus } from "@/hooks/useCozanetStatus";
@@ -12,7 +12,7 @@ import { useCurrentUser } from "@/hooks/useAuth";
 const iconMap: Record<string, React.ElementType> = {
   LayoutDashboard, Wallet, Send, Download, PlusCircle,
   Receipt, ArrowLeftRight, TrendingUp, Sparkles, Gift,
-  Settings, Code,
+  Settings, Code, ShieldCheck,
 };
 
 interface SidebarProps {
