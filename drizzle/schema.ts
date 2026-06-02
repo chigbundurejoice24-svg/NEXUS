@@ -7,6 +7,7 @@ import {
   varchar,
   json,
   bigint,
+  decimal,
   index,
   uniqueIndex,
 } from "drizzle-orm/mysql-core";
@@ -108,58 +109,34 @@ export type AccountAuditLog = typeof accountAuditLogs.$inferSelect;
 export type InsertAccountAuditLog = typeof accountAuditLogs.$inferInsert;
 
 // ─────────────────────────────────────────────
-// TRANSACTIONS  (Phase 1 — Transaction State Machine)
-// ─────────────────────────────────────────────
-// NOTE: userId is int (FK → users.id) — consistent with this codebase.
-// amountRaw and feeRaw are bigint to avoid floating-point precision loss.
-// idempotencyKey has a UNIQUE INDEX for race-proof deduplication.
+// TRANSACTIONS
 // ─────────────────────────────────────────────
 export const transactionStateEnum = mysqlEnum("transaction_state", [
-  "CREATED",
-  "QUOTED",
-  "SIMULATED",
-  "PENDING_SIGNATURE",
-  "SUBMITTED",
-  "CONFIRMED",
-  "SETTLED",
-  "FAILED",
-  "REVERSED",
+  "CREATED", "QUOTED", "SIMULATED", "PENDING_SIGNATURE",
+  "SUBMITTED", "CONFIRMED", "SETTLED", "FAILED", "REVERSED",
 ]);
 
 export const transactions = mysqlTable(
   "transactions",
   {
     id: int("id").autoincrement().primaryKey(),
-    userId: int("user_id").notNull(),                                      // FK → users.id
+    userId: int("user_id").notNull(),
     referenceId: varchar("reference_id", { length: 255 }).notNull(),
     idempotencyKey: varchar("idempotency_key", { length: 255 }),
-
     state: transactionStateEnum.notNull().default("CREATED"),
-
     chainId: int("chain_id").notNull(),
     wallet: varchar("wallet", { length: 42 }).notNull(),
     recipient: varchar("recipient", { length: 42 }).notNull(),
-
-    // Amounts in smallest token unit — no decimals, no precision loss
     amountRaw: bigint("amount_raw", { mode: "bigint" }).notNull(),
     tokenDecimals: int("token_decimals").notNull(),
     feeRaw: bigint("fee_raw", { mode: "bigint" }).notNull(),
     discountBps: int("discount_bps").notNull().default(0),
-
-    // Snapshot of CZN balance at quote time (for audit, stored as decimal string)
     cozanetSnapshot: varchar("cozanet_snapshot", { length: 79 }),
-
-    // Quote expires after 5 minutes — checked before SIMULATED transition
     quoteExpiresAt: timestamp("quote_expires_at"),
-
-    // keccak256 hash of (recipient, amountRaw, tokenDecimals, chainId, wallet, feeRaw)
-    // Used to detect replayed/tampered requests
     requestHash: varchar("request_hash", { length: 66 }),
-
     txHash: varchar("tx_hash", { length: 66 }),
     metadata: json("metadata"),
     riskFlags: json("risk_flags"),
-
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
   },
@@ -169,13 +146,68 @@ export const transactions = mysqlTable(
     stateIdx: index("tx_state_idx").on(table.state),
   })
 );
-
 export type Transaction = typeof transactions.$inferSelect;
 export type InsertTransaction = typeof transactions.$inferInsert;
 export type TransactionState = typeof transactionStateEnum.enumValues[number];
 
 // ─────────────────────────────────────────────
-// LEGACY — kept for backwards compat
+// LEDGER ACCOUNTS (double-entry backbone)
+// ─────────────────────────────────────────────
+export const ledgerAccounts = mysqlTable("ledger_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  accountCode: varchar("account_code", { length: 100 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: mysqlEnum("type", ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE"]).notNull(),
+  assetCode: varchar("asset_code", { length: 10 }).notNull(),
+  balance: decimal("balance", { precision: 36, scale: 18 }).default("0").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type LedgerAccount = typeof ledgerAccounts.$inferSelect;
+
+// ─────────────────────────────────────────────
+// JOURNAL ENTRIES (one per settlement event)
+// ─────────────────────────────────────────────
+export const journalEntries = mysqlTable("journal_entries", {
+  id: int("id").autoincrement().primaryKey(),
+  referenceId: varchar("reference_id", { length: 255 }).notNull(),
+  reversalOfId: int("reversal_of_id"),
+  chainId: int("chain_id"),
+  wallet: varchar("wallet", { length: 42 }),
+  txHash: varchar("tx_hash", { length: 66 }),
+  createdBy: varchar("created_by", { length: 100 }),
+  description: varchar("description", { length: 500 }),
+  status: mysqlEnum("status", ["PENDING", "POSTED", "REVERSED"]).default("POSTED").notNull(),
+  postedAt: timestamp("posted_at").defaultNow().notNull(),
+  reversedAt: timestamp("reversed_at"),
+});
+export type JournalEntry = typeof journalEntries.$inferSelect;
+
+// ─────────────────────────────────────────────
+// JOURNAL LINES (debit / credit legs)
+// ─────────────────────────────────────────────
+export const journalLines = mysqlTable("journal_lines", {
+  id: int("id").autoincrement().primaryKey(),
+  journalEntryId: int("journal_entry_id").notNull(),
+  accountId: int("account_id").notNull(),
+  debit: decimal("debit", { precision: 36, scale: 18 }).default("0").notNull(),
+  credit: decimal("credit", { precision: 36, scale: 18 }).default("0").notNull(),
+});
+export type JournalLine = typeof journalLines.$inferSelect;
+
+// ─────────────────────────────────────────────
+// IDEMPOTENCY KEYS (prevent duplicate ops)
+// ─────────────────────────────────────────────
+export const idempotencyKeys = mysqlTable("idempotency_keys", {
+  id: int("id").autoincrement().primaryKey(),
+  key: varchar("key", { length: 255 }).notNull().unique(),
+  referenceId: varchar("reference_id", { length: 255 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;
+
+// ─────────────────────────────────────────────
+// LEGACY — backwards compat
 // ─────────────────────────────────────────────
 export const userWallets = mysqlTable("user_wallets", {
   id: int("id").autoincrement().primaryKey(),
