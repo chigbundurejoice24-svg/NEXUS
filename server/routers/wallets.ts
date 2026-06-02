@@ -1,133 +1,55 @@
 /**
- * Wallets Router
- * Provides tRPC procedures for managing user wallet addresses
+ * wallets.ts — legacy router shim
+ *
+ * The primary wallet management is in accounts.ts (linkWallet, myWallets, etc.)
+ * This router is kept for backward compatibility and re-exports via account-service.
  */
+import { z } from "zod";
+import { protectedProcedure, router } from "../_core/trpc";
+import {
+  linkWallet,
+  getUserWalletAddresses,
+  removeWallet,
+} from "../lib/accounts/account-service";
+import { requireAuth } from "../lib/accounts/auth";
 
-import { z } from 'zod';
-import { protectedProcedure, router } from '../_core/trpc';
-import { addUserWallet, getUserWallets, removeUserWallet, updateWalletLabel } from '../db';
-
-// Input validation schema
-const EthereumAddressSchema = z.string()
-  .transform(s => s.toLowerCase())
-  .refine(
-    (addr) => /^0x[a-f0-9]{40}$/.test(addr),
-    'Invalid Ethereum address format'
-  );
+const EthAddressSchema = z
+  .string()
+  .toLowerCase()
+  .refine((a) => /^0x[a-f0-9]{40}$/.test(a), "Invalid Ethereum address");
 
 export const walletsRouter = router({
-  /**
-   * Add a new wallet address for the authenticated user
-   */
+  /** Add a wallet address for the authenticated user */
   addWallet: protectedProcedure
-    .input(
-      z.object({
-        address: EthereumAddressSchema,
-        label: z.string().max(255).optional(),
-      })
-    )
+    .input(z.object({
+      address: EthAddressSchema,
+      label:   z.string().max(255).optional(),
+    }))
     .mutation(async ({ input, ctx }) => {
-      if (!ctx.user) {
-        throw new Error('User not authenticated');
-      }
-
-      try {
-        const wallet = await addUserWallet(ctx.user.id, input.address, input.label);
-        return {
-          success: true,
-          wallet,
-        };
-      } catch (error) {
-        console.error('[WalletsRouter] Error adding wallet:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to add wallet',
-          wallet: null,
-        };
-      }
+      const userId = requireAuth(ctx.user?.id);
+      const wallet = await linkWallet({
+        userId,
+        address: input.address,
+        chainId: 56,          // default BSC
+        type: "EXTERNAL",
+        label: input.label,
+      });
+      return { success: true, wallet };
     }),
 
-  /**
-   * List all wallets for the authenticated user
-   */
-  listWallets: protectedProcedure
+  /** List wallet addresses for the authenticated user */
+  getWallets: protectedProcedure
     .query(async ({ ctx }) => {
-      if (!ctx.user) {
-        throw new Error('User not authenticated');
-      }
-
-      try {
-        const wallets = await getUserWallets(ctx.user.id);
-        return {
-          success: true,
-          wallets,
-        };
-      } catch (error) {
-        console.error('[WalletsRouter] Error listing wallets:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to list wallets',
-          wallets: [],
-        };
-      }
+      const userId = requireAuth(ctx.user?.id);
+      return getUserWalletAddresses(userId);
     }),
 
-  /**
-   * Remove a wallet address
-   */
+  /** Remove a wallet address */
   removeWallet: protectedProcedure
-    .input(
-      z.object({
-        walletId: z.number(),
-      })
-    )
+    .input(z.object({ walletId: z.number().int().positive() }))
     .mutation(async ({ input, ctx }) => {
-      if (!ctx.user) {
-        throw new Error('User not authenticated');
-      }
-
-      try {
-        await removeUserWallet(input.walletId, ctx.user.id);
-        return {
-          success: true,
-        };
-      } catch (error) {
-        console.error('[WalletsRouter] Error removing wallet:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to remove wallet',
-        };
-      }
-    }),
-
-  /**
-   * Update wallet label
-   */
-  updateLabel: protectedProcedure
-    .input(
-      z.object({
-        walletId: z.number(),
-        label: z.string().max(255),
-      })
-    )
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user) {
-        throw new Error('User not authenticated');
-      }
-
-      try {
-        const wallet = await updateWalletLabel(input.walletId, ctx.user.id, input.label);
-        return {
-          success: true,
-          wallet,
-        };
-      } catch (error) {
-        console.error('[WalletsRouter] Error updating label:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to update label',
-          wallet: null,
-        };
-      }
+      const userId = requireAuth(ctx.user?.id);
+      await removeWallet(userId, input.walletId);
+      return { success: true };
     }),
 });
