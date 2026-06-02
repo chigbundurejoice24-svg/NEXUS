@@ -15,7 +15,12 @@ export const rampsRouter = router({
       cryptoCurrency: z.string().default("USDT"),
     }))
     .query(async ({ input, ctx }) => {
-      return OnRampService.getBestUrl({ userId: ctx.user!.id, ...input });
+      return OnRampService.getBestUrl({
+        userId: ctx.user!.id,
+        fiatAmount: input.fiatAmount,
+        fiatCurrency: input.fiatCurrency ?? "NGN",
+        cryptoCurrency: input.cryptoCurrency ?? "USDT",
+      });
     }),
 
   /** All on-ramp provider options with fees + estimated crypto */
@@ -26,7 +31,12 @@ export const rampsRouter = router({
       cryptoCurrency: z.string().default("USDT"),
     }))
     .query(async ({ input, ctx }) => {
-      return OnRampService.getAllUrls({ userId: ctx.user!.id, ...input });
+      return OnRampService.getAllUrls({
+        userId: ctx.user!.id,
+        fiatAmount: input.fiatAmount,
+        fiatCurrency: input.fiatCurrency ?? "NGN",
+        cryptoCurrency: input.cryptoCurrency ?? "USDT",
+      });
     }),
 
   /** Off-ramp quotes for bank payout */
@@ -36,7 +46,10 @@ export const rampsRouter = router({
       currency:   z.string().min(3).max(3).default("NGN"),
     }))
     .query(async ({ input }) => {
-      return OffRampService.getQuotes(input);
+      return OffRampService.getQuotes({
+        usdtAmount: input.usdtAmount,
+        currency: input.currency ?? "NGN",
+      });
     }),
 
   /** Initiate a bank payout */
@@ -50,6 +63,13 @@ export const rampsRouter = router({
       currency:               z.string(),
     }))
     .mutation(async ({ input }) => {
-      return OffRampService.initiatePayout(input);
+      return OffRampService.initiatePayout({
+        transactionId:          input.transactionId,
+        recipientBankCode:      input.recipientBankCode,
+        recipientAccountNumber: input.recipientAccountNumber,
+        recipientName:          input.recipientName,
+        amountFiat:             input.amountFiat,
+        currency:               input.currency,
+      });
     }),
 });
