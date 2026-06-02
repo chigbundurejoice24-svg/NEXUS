@@ -1,12 +1,17 @@
 /**
  * trpc.ts
- * tRPC React client wired to the Express backend at /api/trpc.
- * When deployed as a pure static site (Vercel without the Express server),
- * queries will fail gracefully and pages fall back to mock data.
+ * tRPC React client — @trpc/react-query v11 compatible.
+ * In v11, the transformer is passed to httpBatchLink, not the client root.
+ *
+ * When backend is offline (static Vercel deploy), queries fail gracefully
+ * and pages fall back to their mock data.
  */
 import { createTRPCReact } from "@trpc/react-query";
-import { httpBatchLink, loggerLink } from "@trpc/client";
-import superjson from "superjson";
+import { httpBatchLink } from "@trpc/client";
+import SuperJSON from "superjson";
+
+// Import AppRouter type only — this is a type-only import
+// so the server code is never bundled into the client
 import type { AppRouter } from "../../../server/routers";
 
 export const trpc = createTRPCReact<AppRouter>();
@@ -14,17 +19,10 @@ export const trpc = createTRPCReact<AppRouter>();
 export function getTrpcClient() {
   return trpc.createClient({
     links: [
-      loggerLink({
-        enabled: (opts) =>
-          process.env.NODE_ENV === "development" &&
-          (opts.direction === "down" && opts.result instanceof Error),
-      }),
       httpBatchLink({
         url: "/api/trpc",
-        transformer: superjson,
-        headers: () => ({
-          "Content-Type": "application/json",
-        }),
+        // v11: transformer lives here, on the link
+        transformer: SuperJSON,
       }),
     ],
   });
