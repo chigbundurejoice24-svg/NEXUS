@@ -48,7 +48,15 @@ export const accountsRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       const userId = requireAuth(ctx.user?.id);
-      const wallet = await linkWallet({ ...input, userId });
+      const wallet = await linkWallet({
+        userId,
+        address: input.address!,
+        chainId: input.chainId!,
+        type: input.type!,
+        label: input.label,
+        signature: input.signature,
+        signedMessage: input.signedMessage,
+      });
       return { success: true, wallet };
     }),
 
