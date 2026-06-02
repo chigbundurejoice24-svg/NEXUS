@@ -1,21 +1,20 @@
 /**
  * api/index.ts — Vercel Serverless Function entry point
  *
- * Vercel rewrites /api/trpc/* and /api/* to this file.
- * The build step compiles server/_core/index.ts → dist/server.js (ESM bundle).
- * We import that bundle's express app and let Vercel call it as a handler.
+ * Vercel rewrites /api/trpc/* and /api/* here.
+ * Vercel compiles this TypeScript file directly — no .js extensions needed.
  */
 import express from "express";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { appRouter } from "../server/routers.js";
-import { createContext } from "../server/_core/context.js";
+import { appRouter } from "../server/routers";
+import { createContext } from "../server/_core/context";
 
 const app = express();
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
-// CORS
+// CORS — allow all origins for the API tier
 app.use((req, res, next) => {
   const origin = req.headers.origin ?? "";
   res.setHeader("Access-Control-Allow-Origin", origin || "*");
@@ -26,7 +25,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// tRPC — Vercel rewrite strips /api/trpc prefix, so mount at both paths
+// tRPC — Vercel rewrite strips /api/trpc, mount at both paths
 app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
 app.use("/trpc",     createExpressMiddleware({ router: appRouter, createContext }));
 
