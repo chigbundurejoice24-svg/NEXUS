@@ -1,25 +1,28 @@
 /**
  * useRates.ts
  * Fetches live prices from CoinGecko via the tRPC portfolio.getPrices procedure.
- * Refreshes every 30 seconds automatically.
+ * Refreshes every 30 seconds. Falls back gracefully when backend is offline.
  */
 import { trpc } from "../lib/trpc";
 
-// Tokens the Rates page cares about (match portfolio-aggregator asset keys)
 const RATE_KEYS = [
   "ethereum:ETH",
   "bsc:BNB",
-  "polygon:MATIC",
-  "arbitrum:ETH",
+  "ethereum:BTC",
   "ethereum:USDT",
   "ethereum:USDC",
-  "ethereum:BTC",
+  "polygon:MATIC",
+  "arbitrum:ETH",
 ];
 
 export function useRates() {
   const { data, isLoading, error, dataUpdatedAt } = trpc.portfolio.getPrices.useQuery(
     { assetKeys: RATE_KEYS },
-    { staleTime: 30_000, refetchInterval: 30_000 }
+    {
+      staleTime: 30_000,
+      refetchInterval: 30_000,
+      retry: false,
+    }
   );
 
   return {
