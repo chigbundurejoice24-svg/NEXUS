@@ -1,21 +1,22 @@
 /**
- * db.ts — Drizzle database client (lazy connection)
+ * db.ts — Drizzle database client (Neon serverless PostgreSQL)
  *
  * getDb() returns the drizzle client, or null if DATABASE_URL is not set.
- * All DB operations are lazy so the server boots without a DB configured.
+ * Uses @neondatabase/serverless for edge-compatible HTTP connections.
  */
 import { eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle } from "drizzle-orm/neon-http";
+import { neon } from "@neondatabase/serverless";
 import { users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      const sql = neon(process.env.DATABASE_URL);
+      _db = drizzle(sql);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -24,7 +25,7 @@ export async function getDb() {
   return _db;
 }
 
-// ── User helpers used by sdk.ts ───────────────────────────────────────────────
+// ── User helpers ──────────────────────────────────────────────────────────────
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
   if (!db) return undefined;
@@ -53,7 +54,8 @@ export async function upsertUser(params: {
       loginMethod:  params.loginMethod ?? null,
       role,
       lastSignedIn: params.lastSignedIn ?? new Date(),
-    }).onDuplicateKeyUpdate({
+    }).onConflictDoUpdate({
+      target: users.openId,
       set: {
         name:         params.name ?? undefined,
         email:        params.email ?? undefined,
