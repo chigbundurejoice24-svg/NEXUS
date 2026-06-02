@@ -148,7 +148,16 @@ export const transactions = mysqlTable(
 );
 export type Transaction = typeof transactions.$inferSelect;
 export type InsertTransaction = typeof transactions.$inferInsert;
-export type TransactionState = typeof transactionStateEnum.enumValues[number];
+export type TransactionState =
+  | "CREATED"
+  | "QUOTED"
+  | "SIMULATED"
+  | "PENDING_SIGNATURE"
+  | "SUBMITTED"
+  | "CONFIRMED"
+  | "SETTLED"
+  | "FAILED"
+  | "REVERSED";
 
 // ─────────────────────────────────────────────
 // LEDGER ACCOUNTS (double-entry backbone)
