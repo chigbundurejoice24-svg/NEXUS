@@ -1,16 +1,9 @@
 /**
  * app-router-type.ts
- * Client-side type stub for AppRouter.
- * Defines the tRPC router shape without importing ANY server code.
- * This prevents Vite from bundling express/drizzle into the client.
- *
- * When the backend is running, these types are validated at runtime.
- * When offline, queries fail gracefully and pages use mock data.
+ * Client-side type stub for AppRouter — zero server imports.
+ * Mirrors the server router shape for TypeScript inference.
  */
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
-
-// ── Minimal type definitions matching the server router shape ─────
-// These mirror what the server returns — no server imports needed.
 
 export type TransactionState =
   | "CREATED" | "QUOTED" | "SIMULATED" | "PENDING_SIGNATURE"
@@ -61,6 +54,21 @@ export interface TransactionRecord {
   updatedAt: Date;
 }
 
+export interface BuildPayload {
+  chainId: number;
+  tokenAddress: string;
+  transactions: {
+    to: string;
+    data: string;
+    value: string;
+    label: string;
+  }[];
+  simulation: {
+    passed: boolean;
+    warnings: string[];
+  };
+}
+
 export interface PriceMap {
   prices: Record<string, number>;
 }
@@ -75,7 +83,4 @@ export interface AggregatedPortfolio {
   }[];
 }
 
-// ── This type IS the AppRouter for the client ─────────────────────
-// It must match the server's appRouter exactly in shape.
-// The client never imports the real AppRouter — only this type.
-export type AppRouter = any; // typed via the hooks below
+export type AppRouter = any;
