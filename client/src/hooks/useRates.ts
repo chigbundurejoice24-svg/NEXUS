@@ -1,7 +1,6 @@
 /**
  * useRates.ts
- * Fetches live prices from CoinGecko via the tRPC portfolio.getPrices procedure.
- * Refreshes every 30 seconds. Falls back gracefully when backend is offline.
+ * Live prices from CoinGecko via tRPC. Refreshes every 30s.
  */
 import { trpc } from "../lib/trpc";
 
@@ -18,15 +17,11 @@ const RATE_KEYS = [
 export function useRates() {
   const { data, isLoading, error, dataUpdatedAt } = trpc.portfolio.getPrices.useQuery(
     { assetKeys: RATE_KEYS },
-    {
-      staleTime: 30_000,
-      refetchInterval: 30_000,
-      retry: false,
-    }
+    { staleTime: 30_000, refetchInterval: 30_000, retry: false }
   );
 
   return {
-    prices: data?.prices ?? {},
+    prices: ((data as any)?.prices ?? {}) as Record<string, number>,
     isLoading,
     error,
     lastUpdated: dataUpdatedAt ? new Date(dataUpdatedAt) : null,
