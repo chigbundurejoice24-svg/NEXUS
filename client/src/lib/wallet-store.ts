@@ -5,7 +5,7 @@
  *
  * Balances are fetched directly from public EVM RPC nodes using viem.
  */
-import { createPublicClient, http, formatUnits, isAddress } from "viem";
+import { createPublicClient, http, formatUnits } from "viem";
 import { mainnet, bsc, polygon, arbitrum } from "viem/chains";
 
 // ── Storage key ───────────────────────────────────────────────────
