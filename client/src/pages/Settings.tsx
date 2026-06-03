@@ -1,20 +1,104 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
 import {
-  Shield, Wallet, Bell, Moon, Sun, ChevronRight,
-  BadgeCheck, KeyRound, Trash2, Plus,
+  Shield, Wallet, Bell, Moon, Sun,
+  BadgeCheck, KeyRound, Copy, Check, ExternalLink,
 } from "lucide-react";
 import { useCurrentUser } from "@/hooks/useAuth";
 import { useWallets } from "@/hooks/useWallets";
 import { trpc } from "@/lib/trpc";
 import { queryClient } from "@/lib/queryClient";
 
+// ── helpers ──────────────────────────────────────────────────────
+function shorten(addr: string) {
+  if (!addr || addr.length < 12) return addr;
+  return `${addr.slice(0, 8)}...${addr.slice(-6)}`;
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  function copy() {
+    navigator.clipboard.writeText(text);
+    setDone(true);
+    setTimeout(() => setDone(false), 2000);
+  }
+  return (
+    <button onClick={copy} className="p-1.5 rounded-lg hover:bg-aegis-bg-elevated transition-colors">
+      {done
+        ? <Check size={14} className="text-green-500" />
+        : <Copy size={14} className="text-aegis-tertiary-dark" />}
+    </button>
+  );
+}
+
+// ── sub-components ────────────────────────────────────────────────
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-border bg-aegis-bg-elevated">
+        <h3 className="text-xs font-semibold text-aegis-tertiary-dark uppercase tracking-wider">{title}</h3>
+      </div>
+      <div className="divide-y divide-border">{children}</div>
+    </div>
+  );
+}
+
+function SettingRow({
+  icon: Icon,
+  label,
+  description,
+  action,
+  badge,
+  badgeColor = "gray",
+}: {
+  icon: React.ElementType;
+  label: string;
+  description?: string;
+  action?: React.ReactNode;
+  badge?: string;
+  badgeColor?: "green" | "gray" | "yellow";
+}) {
+  const badgeCls = {
+    green:  "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+    gray:   "bg-aegis-bg-elevated text-aegis-tertiary-dark",
+    yellow: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+  }[badgeColor];
+
+  return (
+    <div className="flex items-center gap-4 px-5 py-4">
+      <div className="w-9 h-9 rounded-xl bg-aegis-bg-elevated flex items-center justify-center flex-shrink-0">
+        <Icon size={16} className="text-aegis-accent-purple" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">{label}</p>
+        {description && <p className="text-xs text-aegis-tertiary-dark mt-0.5 truncate">{description}</p>}
+      </div>
+      {badge && (
+        <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${badgeCls}`}>
+          {badge}
+        </span>
+      )}
+      {action && <div className="flex-shrink-0">{action}</div>}
+    </div>
+  );
+}
+
+// ── Toggle ────────────────────────────────────────────────────────
+function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      className={`relative w-11 h-6 rounded-full transition-colors ${on ? "bg-aegis-accent-purple" : "bg-border"}`}
+    >
+      <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-5" : ""}`} />
+    </button>
+  );
+}
+
+// ── Main ──────────────────────────────────────────────────────────
 export default function Settings() {
   const { user } = useCurrentUser();
   const { linkedWallets } = useWallets();
-  const [darkMode, setDarkMode] = useState(
-    document.documentElement.classList.contains("dark")
-  );
+  const [darkMode, setDarkMode] = useState(document.documentElement.classList.contains("dark"));
   const [notifications, setNotifications] = useState(true);
   const [recoveryWallet, setRecoveryWallet] = useState("");
   const [recoveryMsg, setRecoveryMsg] = useState<string | null>(null);
@@ -23,7 +107,6 @@ export default function Settings() {
     onSuccess: () => setRecoveryMsg("Recovery wallet saved ✓"),
     onError: (e) => setRecoveryMsg(`Error: ${e.message}`),
   });
-
   const removeMut = trpc.accounts.removeWallet.useMutation({
     onSuccess: () => queryClient.invalidateQueries(),
   });
@@ -44,32 +127,55 @@ export default function Settings() {
           icon={darkMode ? Moon : Sun}
           label="Dark Mode"
           description="Toggle between light and dark theme"
-          action={
-            <button
-              onClick={toggleDark}
-              className={`relative w-11 h-6 rounded-full transition-colors ${darkMode ? "bg-aegis-accent-purple" : "bg-border"}`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${darkMode ? "translate-x-5" : ""}`}
-              />
-            </button>
-          }
+          action={<Toggle on={darkMode} onToggle={toggleDark} />}
         />
         <SettingRow
           icon={Bell}
           label="Notifications"
-          description="Enable rate alerts and transaction updates"
-          action={
-            <button
-              onClick={() => setNotifications(!notifications)}
-              className={`relative w-11 h-6 rounded-full transition-colors ${notifications ? "bg-aegis-accent-purple" : "bg-border"}`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${notifications ? "translate-x-5" : ""}`}
-              />
-            </button>
-          }
+          description="Rate alerts and transaction updates"
+          action={<Toggle on={notifications} onToggle={() => setNotifications(!notifications)} />}
         />
+      </Section>
+
+      {/* Wallet Details */}
+      <Section title="Wallet Details">
+        {linkedWallets.length === 0 ? (
+          <div className="px-5 py-6 text-center">
+            <Wallet size={32} className="mx-auto mb-2 text-aegis-tertiary-dark" />
+            <p className="text-sm text-aegis-tertiary-dark">No wallets connected yet</p>
+            <p className="text-xs text-aegis-tertiary-dark mt-1">Go to Wallets and connect an EVM address</p>
+          </div>
+        ) : (
+          linkedWallets.map((w) => (
+            <div key={w.id} className="px-5 py-4 flex items-start gap-4">
+              <div className="w-9 h-9 rounded-xl bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center flex-shrink-0">
+                <Wallet size={16} className="text-aegis-accent-purple" />
+              </div>
+              <div className="flex-1 min-w-0 space-y-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">{w.label ?? "My Wallet"}</p>
+                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-aegis-bg-elevated text-aegis-tertiary-dark">
+                    External
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <p className="text-xs font-mono text-aegis-tertiary-dark">{shorten(w.address)}</p>
+                  <CopyButton text={w.address} />
+                  <a
+                    href={`https://etherscan.io/address/${w.address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1.5 rounded-lg hover:bg-aegis-bg-elevated transition-colors"
+                    title="View on Etherscan"
+                  >
+                    <ExternalLink size={12} className="text-aegis-tertiary-dark" />
+                  </a>
+                </div>
+                <p className="text-[11px] text-aegis-tertiary-dark">All chains · Polygon primary</p>
+              </div>
+            </div>
+          ))
+        )}
       </Section>
 
       {/* Security */}
@@ -77,137 +183,63 @@ export default function Settings() {
         <SettingRow
           icon={KeyRound}
           label="Passkey"
-          description={user?.credentialId ? "Passkey registered — you can sign in without a password" : "No passkey set up — available in next release"}
-          badge={user?.credentialId ? "Active" : "Coming Soon"}
+          description={user?.credentialId ? "Passkey active — biometric sign-in enabled" : "No passkey set up yet"}
+          badge={user?.credentialId ? "Active" : "Not Set"}
           badgeColor={user?.credentialId ? "green" : "gray"}
         />
         <SettingRow
           icon={BadgeCheck}
           label="KYC Verification"
-          description={`Status: ${user?.kycStatus ?? "NONE"}`}
-          badge={user?.kycStatus === "VERIFIED" ? "Verified" : user?.kycStatus ?? "NONE"}
+          description={`Identity status: ${user?.kycStatus ?? "Not started"}`}
+          badge={user?.kycStatus === "VERIFIED" ? "Verified" : "Unverified"}
           badgeColor={user?.kycStatus === "VERIFIED" ? "green" : "yellow"}
+        />
+        <SettingRow
+          icon={Shield}
+          label="Email Verification"
+          description={user?.email ?? "No email on file"}
+          badge={user?.emailVerified ? "Verified" : "Unverified"}
+          badgeColor={user?.emailVerified ? "green" : "yellow"}
         />
       </Section>
 
-      {/* Recovery */}
-      <Section title="Account Recovery">
-        <div className="p-4 space-y-3">
-          <p className="text-xs text-aegis-tertiary-dark">
-            Set a recovery wallet address. If you lose access to your passkey, this EVM address can be used to regain access.
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="0x recovery wallet address"
-              value={recoveryWallet}
-              onChange={(e) => setRecoveryWallet(e.target.value)}
-              className="flex-1 px-3 py-2 rounded-lg border border-border bg-aegis-bg-elevated text-sm font-mono text-aegis-primary-dark dark:text-white placeholder:text-aegis-tertiary-dark focus:outline-none focus:ring-2 focus:ring-aegis-accent-purple/30"
-            />
-            <button
-              onClick={() => setRecoveryMut.mutate({ recoveryWallet })}
-              disabled={setRecoveryMut.isPending || !recoveryWallet}
-              className="px-4 py-2 gradient-brand text-white rounded-lg text-sm font-medium disabled:opacity-50"
-            >
-              {setRecoveryMut.isPending ? "Saving..." : "Save"}
-            </button>
+      {/* Recovery wallet */}
+      <Section title="Recovery">
+        <div className="px-5 py-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-aegis-bg-elevated flex items-center justify-center flex-shrink-0">
+              <Shield size={16} className="text-aegis-accent-purple" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">Recovery Wallet</p>
+              <p className="text-xs text-aegis-tertiary-dark mt-0.5">Set a backup wallet address to recover your account</p>
+            </div>
           </div>
-          {user?.recoveryWallet && (
-            <p className="text-xs text-aegis-tertiary-dark">
-              Current: <span className="font-mono text-aegis-accent-purple">{user.recoveryWallet}</span>
-            </p>
-          )}
+          <input
+            type="text"
+            placeholder="0x... recovery address"
+            value={recoveryWallet}
+            onChange={(e) => setRecoveryWallet(e.target.value)}
+            className="w-full px-3 py-2.5 text-sm font-mono rounded-lg border border-border bg-aegis-bg-elevated text-aegis-primary-dark dark:text-white placeholder:text-aegis-tertiary-dark focus:outline-none focus:ring-2 focus:ring-aegis-accent-purple/30"
+          />
           {recoveryMsg && (
-            <p className={`text-xs ${recoveryMsg.startsWith("Error") ? "text-red-500" : "text-aegis-success-green"}`}>
+            <p className={`text-xs ${recoveryMsg.startsWith("Error") ? "text-red-500" : "text-green-500"}`}>
               {recoveryMsg}
             </p>
           )}
+          <button
+            onClick={() => {
+              if (recoveryWallet.trim()) {
+                setRecoveryMut.mutate({ address: recoveryWallet.trim() });
+              }
+            }}
+            disabled={setRecoveryMut.isPending || !recoveryWallet.trim()}
+            className="w-full py-2.5 gradient-brand text-white rounded-lg text-sm font-medium disabled:opacity-50"
+          >
+            {setRecoveryMut.isPending ? "Saving..." : "Save Recovery Wallet"}
+          </button>
         </div>
       </Section>
-
-      {/* Linked Wallets */}
-      <Section title="Linked Wallets">
-        {linkedWallets.length === 0 ? (
-          <div className="p-4 text-sm text-aegis-tertiary-dark text-center">No wallets connected yet</div>
-        ) : (
-          linkedWallets.map((lw, i) => (
-            <div key={lw.id} className="flex items-center gap-3 px-4 py-3 border-b border-border last:border-0">
-              <div className="w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center flex-shrink-0">
-                <Wallet size={14} className="text-aegis-accent-purple" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">{lw.label ?? `Wallet ${i + 1}`}</p>
-                <p className="text-xs text-aegis-tertiary-dark font-mono truncate">{lw.address}</p>
-              </div>
-              <button
-                onClick={() => removeMut.mutate({ walletId: lw.id })}
-                disabled={removeMut.isPending}
-                className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-              >
-                <Trash2 size={13} className="text-red-400" />
-              </button>
-            </div>
-          ))
-        )}
-      </Section>
-
-      {/* Danger zone */}
-      <Section title="Danger Zone">
-        <SettingRow
-          icon={Trash2}
-          label="Delete Account"
-          description="Permanently delete your Aegis account and all data"
-          action={
-            <button className="px-3 py-1.5 text-xs font-medium rounded-lg bg-red-50 dark:bg-red-900/20 text-red-500 hover:bg-red-100 transition-colors">
-              Delete
-            </button>
-          }
-        />
-      </Section>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="bg-card border border-border rounded-xl overflow-hidden">
-      <div className="px-5 py-3 border-b border-border bg-aegis-bg-elevated">
-        <h3 className="text-xs font-semibold text-aegis-tertiary-dark uppercase tracking-wider">{title}</h3>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function SettingRow({
-  icon: Icon, label, description, action, badge, badgeColor,
-}: {
-  icon: React.ElementType;
-  label: string;
-  description: string;
-  action?: React.ReactNode;
-  badge?: string;
-  badgeColor?: "green" | "yellow" | "gray";
-}) {
-  const badgeColors = {
-    green:  "bg-green-50 dark:bg-green-900/20 text-aegis-success-green",
-    yellow: "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-500",
-    gray:   "bg-aegis-bg-elevated text-aegis-tertiary-dark",
-  };
-  return (
-    <div className="flex items-center gap-4 px-5 py-4 border-b border-border last:border-0">
-      <div className="w-9 h-9 rounded-xl bg-aegis-bg-elevated flex items-center justify-center flex-shrink-0">
-        <Icon size={16} className="text-aegis-accent-purple" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">{label}</p>
-        <p className="text-xs text-aegis-tertiary-dark mt-0.5">{description}</p>
-      </div>
-      {badge ? (
-        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${badgeColors[badgeColor ?? "gray"]}`}>
-          {badge}
-        </span>
-      ) : action}
     </div>
   );
 }
