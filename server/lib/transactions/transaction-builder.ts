@@ -23,7 +23,7 @@ import { transactions } from "../../../drizzle/schema";
 import { TransactionStateMachine } from "./transaction-state-machine";
 
 // ── Chain config ───────────────────────────────────────────────────
-const CHAIN_CONFIG: Record<number, { chain: typeof mainnet; rpcUrl: string }> = {
+const CHAIN_CONFIG: Record<number, { chain: any; rpcUrl: string }> = {
   1:     { chain: mainnet,  rpcUrl: "https://eth.llamarpc.com" },
   56:    { chain: bsc,      rpcUrl: "https://bsc-dataseed.binance.org" },
   137:   { chain: polygon,  rpcUrl: "https://polygon-rpc.com" },
