@@ -1,8 +1,11 @@
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
+
+// ── Inlined from @shared/const ────────────────────────────────────────────────
+const COOKIE_NAME  = "app_session_id";
+const ONE_YEAR_MS  = 1000 * 60 * 60 * 24 * 365;
 
 function getQueryParam(req: Request, key: string): string | undefined {
   const value = req.query[key];
@@ -51,3 +54,4 @@ export function registerOAuthRoutes(app: Express) {
     }
   });
 }
+
