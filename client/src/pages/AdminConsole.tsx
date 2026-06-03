@@ -2,6 +2,9 @@
  * AdminConsole.tsx — Admin dashboard for Aegis operators
  * Accessible only to users with role === 'admin'
  */
+import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useCurrentUser } from '@/hooks/useAuth';
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Users, Receipt, TrendingUp, Flag, Shield, RefreshCw, Search, ChevronRight, AlertTriangle } from "lucide-react";
@@ -12,6 +15,16 @@ import { formatUnits } from "viem";
 type Tab = "overview" | "users" | "transactions";
 
 export default function AdminConsole() {
+  const navigate = useNavigate();
+  const { user, isLoading } = useCurrentUser();
+  // Security: redirect non-admins immediately — no flash of admin content
+  useEffect(() => {
+    if (!isLoading && !user?.isAdmin) {
+      navigate("/", { replace: true });
+    }
+  }, [user, isLoading, navigate]);
+  if (!user?.isAdmin) return null;
+
   const [tab, setTab] = useState<Tab>("overview");
   const [userSearch, setUserSearch] = useState("");
   const [selectedUser, setSelectedUser] = useState<number | null>(null);
