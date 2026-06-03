@@ -2,7 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Send, Download, PlusCircle, ArrowLeftRight, Eye, EyeOff,
-  TrendingUp, ChevronRight, Wallet, Plus,
+  TrendingUp, ChevronRight, Wallet, Plus, Copy, Check,
 } from "lucide-react";
 import {
   quickActions, exchangeRates as mockRates, userProfile,
@@ -15,6 +15,7 @@ import { useCurrentUser } from "@/hooks/useAuth";
 export default function Dashboard() {
   const navigate = useNavigate();
   const [showBalance, setShowBalance] = useState(true);
+  const [copiedAddr, setCopiedAddr] = useState(false);
   const { wallets, totalUsd, totalNgn } = useWalletStore();
 
   const hasRealWallets = wallets.length > 0;
@@ -22,13 +23,20 @@ export default function Dashboard() {
   const { user } = useCurrentUser();
   const firstName = (user as any)?.name?.split(" ")[0] ?? userProfile.name.split(" ")[0];
 
-  // Live USDT rate from mock rates
   const usdtNgn = mockRates.find(r => r.from === "USDT")?.rate ?? 1595.20;
 
-  // Quick action icons
   const actionIconMap: Record<string, React.ElementType> = {
     Send, Download, PlusCircle, ArrowLeftRight,
   };
+
+  const primaryWallet = wallets[0] ?? null;
+
+  function copyWallet() {
+    if (!primaryWallet) return;
+    navigator.clipboard.writeText(primaryWallet.address);
+    setCopiedAddr(true);
+    setTimeout(() => setCopiedAddr(false), 2000);
+  }
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
@@ -81,171 +89,149 @@ export default function Dashboard() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => navigate("/fund")}
-                className="flex items-center gap-1.5 px-4 py-2 bg-white/15 hover:bg-white/25 rounded-xl text-sm font-medium transition-colors backdrop-blur-sm border border-white/20">
-                <Plus size={15} /> Add Funds
-              </button>
-              <button onClick={() => navigate("/send")}
-                className="flex items-center gap-1.5 px-4 py-2 bg-white/15 hover:bg-white/25 rounded-xl text-sm font-medium transition-colors backdrop-blur-sm border border-white/20">
-                <Send size={15} /> Send Money
-              </button>
-              <button onClick={() => navigate("/receive")}
-                className="flex items-center gap-1.5 px-4 py-2 bg-white/15 hover:bg-white/25 rounded-xl text-sm font-medium transition-colors backdrop-blur-sm border border-white/20">
-                <Download size={15} /> Receive
-              </button>
+              {quickActions.slice(0, 4).map((action) => {
+                const Icon = actionIconMap[action.icon] ?? Wallet;
+                return (
+                  <button
+                    key={action.id}
+                    onClick={() => navigate(action.href)}
+                    className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-sm font-medium transition-colors backdrop-blur-sm"
+                  >
+                    <Icon size={16} />
+                    {action.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Rate Card */}
-          <div className="lg:min-w-[180px] bg-white/10 backdrop-blur-sm rounded-2xl p-4 border border-white/20">
-            <p className="text-xs text-white/60 uppercase tracking-wider mb-1">Today's Rate</p>
-            <p className="text-xs text-white/50 mb-2">1 USDT =</p>
-            <p className="text-2xl font-semibold">₦{usdtNgn.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+          {/* Rate card */}
+          <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 min-w-[180px]">
+            <p className="text-xs text-white/60 mb-1">Today's Rate</p>
+            <p className="text-xs text-white/60">1 USDT =</p>
+            <p className="text-xl font-semibold mt-1">₦{usdtNgn.toLocaleString()}</p>
             <div className="flex items-center gap-1 mt-2">
               <TrendingUp size={12} className="text-green-300" />
-              <span className="text-xs text-green-300">Live</span>
-            </div>
-            <div className="mt-3 h-10 opacity-40">
-              <svg viewBox="0 0 100 30" className="w-full h-full">
-                <polyline points="0,25 15,20 30,22 45,15 60,18 75,10 90,13 100,8"
-                  fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"/>
-              </svg>
+              <span className="text-xs text-green-300">+0.8% Live</span>
             </div>
           </div>
         </div>
       </motion.div>
 
-      {/* Quick Actions */}
-      <div>
-        <h3 className="text-base font-semibold text-aegis-primary-dark dark:text-white mb-3">Quick Actions</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {quickActions.map((action, i) => {
-            const Icon = actionIconMap[action.icon] ?? Send;
-            return (
-              <motion.button
-                key={action.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                whileHover={{ y: -3 }}
-                onClick={() => navigate(action.href)}
-                className="flex flex-col items-center gap-3 p-4 bg-card border border-border rounded-2xl hover:shadow-md transition-all text-left"
-              >
-                <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm"
-                  style={{ background: action.gradient }}>
-                  <Icon size={22} className="text-white" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white text-center">{action.title}</p>
-                  <p className="text-xs text-aegis-tertiary-dark text-center mt-0.5">{action.description}</p>
-                </div>
-              </motion.button>
-            );
-          })}
-        </div>
-      </div>
+      {/* My Wallet card */}
+      {primaryWallet ? (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-card border border-border rounded-2xl p-5"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center">
+                <Wallet size={16} className="text-aegis-accent-purple" />
+              </div>
+              <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white">My Aegis Wallet</p>
+            </div>
+            <button
+              onClick={() => navigate("/wallets")}
+              className="text-xs text-aegis-accent-purple font-medium flex items-center gap-1 hover:opacity-80"
+            >
+              Manage <ChevronRight size={12} />
+            </button>
+          </div>
 
-      {/* My Wallets */}
+          <div className="flex items-center gap-2 p-3 bg-aegis-bg-elevated rounded-xl mb-3">
+            <p className="text-xs font-mono text-aegis-primary-dark dark:text-white flex-1 truncate">
+              {primaryWallet.address}
+            </p>
+            <button onClick={copyWallet} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors flex-shrink-0">
+              {copiedAddr
+                ? <Check size={14} className="text-green-500" />
+                : <Copy size={14} className="text-aegis-tertiary-dark" />}
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between text-sm">
+            <div>
+              <p className="text-xs text-aegis-tertiary-dark">Balance</p>
+              <p className="font-semibold text-aegis-primary-dark dark:text-white">
+                {showBalance
+                  ? `$${wallets[0]?.balanceUsd?.toLocaleString("en-US", { minimumFractionDigits: 2 }) ?? "0.00"}`
+                  : "••••••"}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-aegis-tertiary-dark">Wallets</p>
+              <p className="font-semibold text-aegis-primary-dark dark:text-white">{wallets.length} connected</p>
+            </div>
+          </div>
+        </motion.div>
+      ) : (
+        <motion.button
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          onClick={() => navigate("/wallets")}
+          whileHover={{ y: -2 }}
+          className="w-full bg-card border-2 border-dashed border-border rounded-2xl p-5 flex items-center gap-4 hover:border-aegis-accent-purple/40 transition-all"
+        >
+          <div className="w-10 h-10 rounded-xl bg-aegis-bg-elevated flex items-center justify-center">
+            <Plus size={20} className="text-aegis-accent-purple" />
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white">Connect Your Wallet</p>
+            <p className="text-xs text-aegis-tertiary-dark mt-0.5">Track your live crypto balance</p>
+          </div>
+          <ChevronRight size={16} className="text-aegis-tertiary-dark ml-auto" />
+        </motion.button>
+      )}
+
+      {/* My Wallets row */}
       <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-aegis-primary-dark dark:text-white">My Wallets</h3>
-          <button onClick={() => navigate("/wallets")}
-            className="text-sm text-aegis-accent-purple hover:opacity-80 transition-opacity flex items-center gap-1">
-            View all <ChevronRight size={14} />
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-aegis-primary-dark dark:text-white">My Wallets</h3>
+          <button
+            onClick={() => navigate("/wallets")}
+            className="text-xs text-aegis-accent-purple font-medium flex items-center gap-1"
+          >
+            View all <ChevronRight size={12} />
           </button>
         </div>
 
         {!hasRealWallets ? (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="border-2 border-dashed border-border rounded-2xl p-8 text-center"
-          >
-            <div className="w-12 h-12 rounded-full bg-aegis-bg-elevated flex items-center justify-center mx-auto mb-3">
-              <Wallet size={22} className="text-aegis-tertiary-dark" />
-            </div>
-            <p className="text-sm font-medium text-aegis-primary-dark dark:text-white mb-1">No wallets connected yet</p>
-            <p className="text-xs text-aegis-tertiary-dark mb-4">Connect a wallet to see your real balances here</p>
-            <button onClick={() => navigate("/wallets")}
-              className="px-4 py-2 gradient-brand text-white rounded-xl text-sm font-medium hover:opacity-90 transition-opacity shadow-glow">
-              + Connect Wallet
-            </button>
-          </motion.div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {["Tether", "USD Coin", "Bitcoin", "Ethereum"].map((name, i) => (
+              <div key={i} className="bg-card border border-border rounded-xl p-4">
+                <p className="text-xs text-aegis-tertiary-dark">Mock</p>
+                <p className="text-sm font-medium text-aegis-primary-dark dark:text-white mt-1">{name}</p>
+                <p className="text-xs text-aegis-tertiary-dark font-mono mt-1">0x3F...B66E</p>
+              </div>
+            ))}
+          </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {wallets.slice(0, 4).map((w, index) => (
-              <motion.div key={w.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }} whileHover={{ y: -4 }}
-                className="bg-card border border-border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all">
-                <div className="h-2 bg-gradient-to-r from-[#5B3CF5] to-[#3B5BDB]" />
-                <div className="p-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center">
-                      <Wallet size={14} className="text-aegis-accent-purple" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white truncate">
-                        {w.label || `Wallet ${index + 1}`}
-                      </p>
-                      <p className="text-[10px] text-aegis-tertiary-dark font-mono truncate">
-                        {`${w.address.slice(0,6)}…${w.address.slice(-4)}`}
-                      </p>
-                    </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {wallets.slice(0, 4).map((w) => (
+              <motion.div
+                key={w.id}
+                whileHover={{ y: -2 }}
+                className="bg-card border border-border rounded-xl p-4 cursor-pointer"
+                onClick={() => navigate("/wallets")}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-7 h-7 rounded-lg bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center">
+                    <Wallet size={14} className="text-aegis-accent-purple" />
                   </div>
-                  {w.loading ? (
-                    <div className="h-6 bg-aegis-bg-elevated rounded animate-pulse mb-1" />
-                  ) : (
-                    <>
-                      <p className="text-lg font-semibold text-aegis-primary-dark dark:text-white">
-                        ${w.balanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </p>
-                      <p className="text-xs text-aegis-secondary-dark mt-0.5">
-                        ≈ ₦{(w.balanceUsd * NGN_PER_USD).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </p>
-                    </>
-                  )}
-                  <div className="flex gap-2 mt-3">
-                    <button onClick={() => navigate("/send")}
-                      className="flex-1 py-1.5 text-xs font-medium rounded-lg border border-border hover:bg-aegis-bg-elevated transition-colors text-aegis-primary-dark dark:text-white">Send</button>
-                    <button onClick={() => navigate("/receive")}
-                      className="flex-1 py-1.5 text-xs font-medium rounded-lg border border-border hover:bg-aegis-bg-elevated transition-colors text-aegis-primary-dark dark:text-white">Receive</button>
-                  </div>
+                  <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">{w.label}</p>
                 </div>
+                <p className="text-xs font-mono text-aegis-tertiary-dark truncate">{w.address.slice(0,8)}...{w.address.slice(-4)}</p>
+                <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white mt-2">
+                  {showBalance ? `$${w.balanceUsd?.toFixed(2) ?? "0.00"}` : "••••"}
+                </p>
               </motion.div>
             ))}
           </div>
         )}
-      </div>
-
-      {/* Recent Rates */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-aegis-primary-dark dark:text-white">Live Rates</h3>
-          <button onClick={() => navigate("/rates")}
-            className="text-sm text-aegis-accent-purple hover:opacity-80 flex items-center gap-1">
-            See all <ChevronRight size={14} />
-          </button>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {mockRates.slice(0, 3).map((rate, i) => (
-            <motion.div key={rate.from} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.05 }}
-              className="bg-card border border-border rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white">{rate.from}/{rate.to}</p>
-                <p className="text-xs text-aegis-tertiary-dark mt-0.5">{rate.from} to {rate.to}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white">
-                  {rate.to === "NGN" ? `₦${rate.rate.toLocaleString()}` : `$${rate.rate.toLocaleString()}`}
-                </p>
-                <span className={`text-xs font-medium ${rate.change24h >= 0 ? "text-aegis-success-green" : "text-red-500"}`}>
-                  {rate.change24h >= 0 ? "+" : ""}{rate.change24h}%
-                </span>
-              </div>
-            </motion.div>
-          ))}
-        </div>
       </div>
     </div>
   );
