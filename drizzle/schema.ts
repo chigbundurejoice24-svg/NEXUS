@@ -11,6 +11,7 @@ import {
   index,
   uniqueIndex,
   serial,
+  boolean,
 } from "drizzle-orm/pg-core";
 
 // ─────────────────────────────────────────────
@@ -32,6 +33,9 @@ export const users = pgTable("users", {
   openId:               varchar("open_id",              { length: 64  }).notNull().unique(),
   name:                 text("name"),
   email:                varchar("email",                { length: 320 }).unique(),
+  emailVerified:        boolean("email_verified").default(false).notNull(),
+  verificationCode:     varchar("verification_code",    { length: 6   }),
+  codeExpiresAt:        timestamp("code_expires_at"),
   phone:                varchar("phone",                { length: 32  }).unique(),
   loginMethod:          varchar("login_method",         { length: 64  }),
   role:                 roleEnum("role").default("user").notNull(),
@@ -205,16 +209,6 @@ export const idempotencyKeys = pgTable("idempotency_keys", {
 export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;
 
 // ─────────────────────────────────────────────
-// LEGACY SHIM
+// LEGACY SHIM (keep for backwards compat)
 // ─────────────────────────────────────────────
-export const userWallets = pgTable("user_wallets", {
-  id:        serial("id").primaryKey(),
-  userId:    integer("user_id").notNull(),
-  address:   varchar("address", { length: 42 }).notNull(),
-  label:     varchar("label",   { length: 255 }),
-  isActive:  varchar("is_active", { length: 8 }).default("true").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-export type UserWallet       = typeof userWallets.$inferSelect;
-export type InsertUserWallet = typeof userWallets.$inferInsert;
+export const userWallets = linkedWallets;
