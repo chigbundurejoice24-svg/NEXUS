@@ -2,7 +2,6 @@
   "name": "aegis",
   "private": true,
   "version": "1.0.0",
-  "type": "module",
   "scripts": {
     "dev": "concurrently \"vite\" \"tsx watch server/_core/index.ts\"",
     "build": "vite build && esbuild server/_core/index.ts --bundle --platform=node --packages=external --format=esm --outfile=dist/server.js",
