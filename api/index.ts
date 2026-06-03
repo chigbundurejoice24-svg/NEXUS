@@ -56,6 +56,19 @@ try {
   app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
   app.use("/trpc",     createExpressMiddleware({ router: appRouter, createContext }));
 
+
+  // ── Confirmation poller cron ──────────────────────────────────────
+  app.get("/api/cron/confirmations", async (_req: any, res: any) => {
+    try {
+      const { pollConfirmations } = await import("../server/lib/transactions/confirmation-poller");
+      const result = await pollConfirmations();
+      return res.json({ ok: true, ...result });
+    } catch (e: any) {
+      console.error("[Cron] Confirmation poller error:", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message });
+    }
+  });
+
   // ── Health — no version leak ──────────────────────────────────────────
   app.get("/api/health", (_req: any, res: any) => {
     res.json({ ok: true, ts: Date.now() });

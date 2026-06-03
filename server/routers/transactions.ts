@@ -2,14 +2,13 @@
  * transactions.ts — tRPC router
  *
  * Transaction lifecycle:
- *   create     → CREATED  (idempotent)
- *   quote      → QUOTED   (apply fee + expiry)
- *   build      → SIMULATED (construct + simulate on-chain payload)
- *   requestSig → PENDING_SIGNATURE
- *   submit     → SUBMITTED (store tx hash)
- *   transition → any valid next state (admin/manual advance)
- *   get        → ownership-checked fetch
- *   list       → all txs for authenticated user
+ *   create        → CREATED  (idempotent)
+ *   sendMoney     → QUOTED → SIMULATED → PENDING_SIGNATURE (combined, with off-ramp)
+ *   submit        → SUBMITTED (store tx hash after user signs)
+ *   build         → SIMULATED (manual, crypto-to-crypto)
+ *   requestSig    → PENDING_SIGNATURE (manual)
+ *   transition    → any valid next state
+ *   get / list    → ownership-checked reads
  */
 
 import { z } from "zod";
@@ -19,17 +18,21 @@ import { isAddress } from "viem";
 import { TransactionService, SUPPORTED_CHAIN_IDS } from "../lib/transactions/transaction-service";
 import { TransactionStateMachine } from "../lib/transactions/transaction-state-machine";
 import { TransactionBuilder } from "../lib/transactions/transaction-builder";
+import { OffRampService } from "../lib/ramps/offramp-service";
+import { getDb } from "../db";
+import { transactions } from "../../drizzle/schema";
+import { eq } from "drizzle-orm";
 
 const SUPPORTED_CHAINS_SET = new Set(SUPPORTED_CHAIN_IDS as readonly number[]);
 
-// Validate bigint-as-string (no scientific notation, positive only)
 const BigIntStringSchema = z
   .string()
-  .regex(/^[0-9]+$/, "Amount must be a positive integer string (smallest token unit)")
+  .regex(/^[0-9]+$/, "Amount must be a positive integer string")
   .refine((s) => BigInt(s) > 0n, "Amount must be greater than zero");
 
 export const transactionsRouter = router({
-  // ── CREATE ────────────────────────────────────────────────────────
+
+  // ── CREATE (crypto-to-crypto) ─────────────────────────────────────
   create: protectedProcedure
     .input(
       z.object({
@@ -43,7 +46,6 @@ export const transactionsRouter = router({
         recipient:     z.string().refine(isAddress, "Invalid recipient address"),
         amountRaw:     BigIntStringSchema,
         tokenDecimals: z.number().int().min(0).max(18),
-        businessIds:   z.array(z.number().int().positive()).optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {
@@ -58,10 +60,134 @@ export const transactionsRouter = router({
         recipient:      input.recipient,
         amountRaw:      BigInt(input.amountRaw),
         tokenDecimals:  input.tokenDecimals,
-        businessIds:    input.businessIds,
       });
 
       return { transactionId: txId };
+    }),
+
+  // ── SEND MONEY TO BANK (combined: quote → create → build → pending_sig) ──
+  // This is the primary Send Money flow.
+  // 1. Gets an off-ramp quote (rate, fee, deposit address) from Transak
+  // 2. Creates the tx record routing to the deposit address
+  // 3. Builds + simulates on-chain calldata
+  // 4. Advances to PENDING_SIGNATURE, returns unsigned txs for the client to sign
+  sendMoney: protectedProcedure
+    .input(
+      z.object({
+        referenceId:    z.string().min(1).max(255),
+        idempotencyKey: z.string().min(1).max(255),
+        chainId: z.number().int().refine(
+          (c) => SUPPORTED_CHAINS_SET.has(c),
+          `Unsupported chain: ${SUPPORTED_CHAIN_IDS.join(", ")}`
+        ),
+        wallet:        z.string().refine(isAddress, "Invalid sender wallet address"),
+        recipientBank: z.object({
+          bankCode:      z.string().min(1),
+          accountNumber: z.string().min(5).max(20),
+          accountName:   z.string().min(1),
+          currency:      z.string().length(3).default("NGN"),
+        }),
+        amountRaw:     BigIntStringSchema,  // USDT in smallest unit (e.g. 6 decimals)
+        tokenDecimals: z.number().int().min(0).max(18),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+
+      const usdtAmount = Number(input.amountRaw) / 10 ** input.tokenDecimals;
+
+      // ── 1. Get off-ramp quote from Transak ──────────────────────
+      let quote;
+      try {
+        quote = await OffRampService.getQuote({
+          usdtAmount,
+          currency:      input.recipientBank.currency,
+          bankCode:      input.recipientBank.bankCode,
+          accountNumber: input.recipientBank.accountNumber,
+          accountName:   input.recipientBank.accountName,
+        });
+      } catch (err: any) {
+        throw new TRPCError({
+          code:    "INTERNAL_SERVER_ERROR",
+          message: `Could not get off-ramp quote: ${err?.message}`,
+        });
+      }
+
+      // ── 2. Create transaction (recipient = Transak deposit address) ──
+      let txId: number;
+      try {
+        txId = await TransactionService.createTransaction({
+          userId:         ctx.user.id,
+          referenceId:    input.referenceId,
+          idempotencyKey: input.idempotencyKey,
+          chainId:        input.chainId,
+          wallet:         input.wallet,
+          // IMPORTANT: recipient is the off-ramp deposit address, not the bank account
+          recipient:      quote.depositAddress,
+          amountRaw:      BigInt(input.amountRaw),
+          tokenDecimals:  input.tokenDecimals,
+        });
+      } catch (err: any) {
+        throw new TRPCError({
+          code:    "INTERNAL_SERVER_ERROR",
+          message: `Failed to create transaction: ${err?.message}`,
+        });
+      }
+
+      // ── 3. Store quoteId + bank details in metadata for poller ──
+      const db = await getDb();
+      if (db) {
+        await db
+          .update(transactions)
+          .set({
+            metadata: {
+              quoteId:     quote.quoteId,
+              bankDetails: {
+                bankCode:      input.recipientBank.bankCode,
+                accountNumber: input.recipientBank.accountNumber,
+                accountName:   input.recipientBank.accountName,
+                currency:      input.recipientBank.currency,
+              },
+              provider:      quote.provider,
+              estimatedFiat: quote.estimatedFiat,
+              fiatCurrency:  quote.fiatCurrency,
+            },
+            updatedAt: new Date(),
+          })
+          .where(eq(transactions.id, txId));
+      }
+
+      // ── 4. Advance to QUOTED ─────────────────────────────────────
+      await TransactionStateMachine.transition(txId, "QUOTED");
+
+      // ── 5. Build calldata + simulate (QUOTED → SIMULATED) ───────
+      let buildResult;
+      try {
+        buildResult = await TransactionBuilder.build(txId, quote.depositAddress);
+      } catch (err: any) {
+        throw new TRPCError({
+          code:    "INTERNAL_SERVER_ERROR",
+          message: `Build failed: ${err?.message}`,
+        });
+      }
+
+      // ── 6. Advance to PENDING_SIGNATURE ──────────────────────────
+      await TransactionBuilder.requestSignature(txId);
+
+      // ── 7. Return everything the client needs to sign ─────────────
+      return {
+        transactionId: txId,
+        unsignedTxs:   buildResult,
+        quote: {
+          provider:      quote.provider,
+          estimatedFiat: quote.estimatedFiat,
+          fiatCurrency:  quote.fiatCurrency,
+          fee:           quote.fee,
+          feePercent:    quote.feePercent,
+          rate:          quote.rate,
+          estimatedTime: quote.estimatedTime,
+        },
+      };
     }),
 
   // ── GET ───────────────────────────────────────────────────────────
@@ -70,7 +196,7 @@ export const transactionsRouter = router({
     .query(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const tx = await TransactionService.getTransaction(input.transactionId, ctx.user.id);
-      if (!tx) throw new TRPCError({ code: "NOT_FOUND", message: "Transaction not found" });
+      if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
       return tx;
     }),
 
@@ -95,85 +221,69 @@ export const transactionsRouter = router({
     )
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-
       const tx = await TransactionService.getTransaction(input.transactionId, ctx.user.id);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
-
       await TransactionStateMachine.transition(input.transactionId, input.toState);
       return { success: true, state: input.toState };
     }),
 
-  // ── BUILD (QUOTED → SIMULATED) ────────────────────────────────────
-  // Constructs the ERC-20 transfer calldata and runs on-chain simulation.
-  // Returns the unsigned transaction payload for the frontend signing UI.
+  // ── BUILD (manual, crypto-to-crypto) ─────────────────────────────
   build: protectedProcedure
     .input(z.object({ transactionId: z.number().int().positive() }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-
       const tx = await TransactionService.getTransaction(input.transactionId, ctx.user.id);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
       if (tx.state !== "QUOTED") {
         throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: `Transaction must be QUOTED — current state: ${tx.state}`,
+          code:    "PRECONDITION_FAILED",
+          message: `Transaction must be QUOTED — current: ${tx.state}`,
         });
       }
-
       try {
         return await TransactionBuilder.build(input.transactionId);
       } catch (err: any) {
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: err?.message ?? "Build failed",
-        });
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: err?.message });
       }
     }),
 
-  // ── REQUEST SIGNATURE (SIMULATED → PENDING_SIGNATURE) ────────────
-  // Call this right before showing the signing UI.
+  // ── REQUEST SIGNATURE ─────────────────────────────────────────────
   requestSignature: protectedProcedure
     .input(z.object({ transactionId: z.number().int().positive() }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-
       const tx = await TransactionService.getTransaction(input.transactionId, ctx.user.id);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
       if (tx.state !== "SIMULATED") {
         throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: `Transaction must be SIMULATED — current state: ${tx.state}`,
+          code:    "PRECONDITION_FAILED",
+          message: `Transaction must be SIMULATED — current: ${tx.state}`,
         });
       }
-
       await TransactionBuilder.requestSignature(input.transactionId);
       return { success: true };
     }),
 
-  // ── SUBMIT (PENDING_SIGNATURE → SUBMITTED) ────────────────────────
-  // Called after the user signs and broadcasts the transaction.
-  // Stores the on-chain tx hash and advances state.
+  // ── SUBMIT (after user signs) ─────────────────────────────────────
   submit: protectedProcedure
     .input(
       z.object({
         transactionId: z.number().int().positive(),
         txHash: z
           .string()
-          .regex(/^0x[0-9a-fA-F]{64}$/, "Invalid tx hash — must be 0x followed by 64 hex chars"),
+          .regex(/^0x[0-9a-fA-F]{64}$/, "Invalid tx hash"),
       })
     )
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-
       const tx = await TransactionService.getTransaction(input.transactionId, ctx.user.id);
       if (!tx) throw new TRPCError({ code: "NOT_FOUND" });
       if (tx.state !== "PENDING_SIGNATURE") {
         throw new TRPCError({
-          code: "PRECONDITION_FAILED",
-          message: `Transaction must be PENDING_SIGNATURE — current state: ${tx.state}`,
+          code:    "PRECONDITION_FAILED",
+          message: `Transaction must be PENDING_SIGNATURE — current: ${tx.state}`,
         });
       }
-
       await TransactionBuilder.submit(input.transactionId, input.txHash);
       return { success: true };
     }),
