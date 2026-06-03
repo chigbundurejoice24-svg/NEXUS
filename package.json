@@ -57,7 +57,7 @@
     "@trpc/client": "^11.1.2",
     "@trpc/react-query": "^11.1.2",
     "@tanstack/react-query": "^5.80.2",
-    "superjson": "^2.2.2",
+    "superjson": "1.13.3",
     "viem": "^2.30.1",
     "uuid": "^11.1.0",
     "jsonwebtoken": "^9.0.2",
