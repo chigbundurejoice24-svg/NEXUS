@@ -1,6 +1,5 @@
 /**
  * server/routers/index.ts — App router barrel
- * Combines all sub-routers into a single tRPC appRouter.
  */
 import { router } from "../_core/trpc";
 import { authRouter }         from "./auth";
@@ -11,6 +10,7 @@ import { transactionsRouter } from "./transactions";
 import { cozanetRouter }      from "./cozanet";
 import { adminRouter }        from "./admin";
 import { portfolioRouter }    from "./portfolio";
+import { aiRouter }           from "./ai";
 
 export const appRouter = router({
   auth:         authRouter,
@@ -21,6 +21,7 @@ export const appRouter = router({
   cozanet:      cozanetRouter,
   admin:        adminRouter,
   portfolio:    portfolioRouter,
+  ai:           aiRouter,
 });
 
 export type AppRouter = typeof appRouter;
