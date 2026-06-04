@@ -5,7 +5,7 @@
   "outputDirectory": "dist",
   "framework": null,
   "functions": {
-    "api/index.ts": {
+    "api/server.ts": {
       "maxDuration": 30
     }
   },
@@ -22,11 +22,11 @@
   "rewrites": [
     {
       "source": "/api/trpc/:path*",
-      "destination": "/api/index"
+      "destination": "/api/server"
     },
     {
       "source": "/api/:path*",
-      "destination": "/api/index"
+      "destination": "/api/server"
     },
     {
       "source": "/(.*)",
