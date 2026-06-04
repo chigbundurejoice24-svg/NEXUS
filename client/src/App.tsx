@@ -15,6 +15,7 @@ import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
 import DeveloperAPI from '@/pages/DeveloperAPI'
 import AdminConsole from '@/pages/AdminConsole'
+import LegalPage from '@/pages/LegalPage'
 import Help from '@/pages/Help'
 import Notifications from '@/pages/Notifications'
 import BuyCozanet from '@/pages/BuyCozanet'
@@ -30,6 +31,9 @@ export default function App() {
     <Routes>
       {/* Public auth page */}
       <Route path="/auth" element={<Auth />} />
+
+      {/* Public legal page — no auth required */}
+      <Route path="/legal" element={<LegalPage />} />
 
       {/* Protected app routes */}
       <Route element={
