@@ -1,5 +1,6 @@
 /**
  * server/routers/index.ts — App router barrel
+ * Last updated: fixes notify + admin broadcast
  */
 import { router } from "../_core/trpc";
 import { authRouter }         from "./auth";
@@ -29,3 +30,4 @@ export const appRouter = router({
 });
 
 export type AppRouter = typeof appRouter;
+
