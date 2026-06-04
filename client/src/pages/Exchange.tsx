@@ -19,14 +19,17 @@ export default function Exchange() {
   const { wallets } = useWalletStore()
   const { prices } = useRates()
 
-  // Build unique token list from connected wallets (dedup by symbol)
+  // Build unique token list from wallet assets[] (dedup by symbol)
   const tokens: TokenOption[] = useMemo(() => {
     const seen = new Set<string>()
     const out: TokenOption[] = []
     for (const w of wallets) {
-      if (!seen.has(w.symbol)) {
-        seen.add(w.symbol)
-        out.push({ symbol: w.symbol, balance: w.balance, color: TOKEN_COLORS[w.symbol] ?? '#5B3CF5', address: w.address })
+      for (const asset of (w as any).assets ?? []) {
+        const sym = (asset.symbol ?? '').toUpperCase()
+        if (sym && !seen.has(sym)) {
+          seen.add(sym)
+          out.push({ symbol: sym, balance: parseFloat(asset.balance ?? '0'), color: TOKEN_COLORS[sym] ?? '#5B3CF5', address: w.address })
+        }
       }
     }
     // Fallback if no wallets connected yet
