@@ -6,8 +6,10 @@ import {
   timestamp,
   varchar,
   json,
+  jsonb,
   bigint,
   numeric,
+  sql as pgSql,
   index,
   uniqueIndex,
   serial,
@@ -258,8 +260,7 @@ export const portfolioSnapshots = pgTable('portfolio_snapshots', {
   totalValueUsd: numeric('total_value_usd', { precision: 20, scale: 2 }).notNull().default('0'),
   chainCount:    integer('chain_count').notNull().default(0),
   assetCount:    integer('asset_count').notNull().default(0),
-  snapshot:      jsonb('snapshot').notNull().default(sql`'{}'`),
+  snapshot:      jsonb('snapshot').notNull().default(pgSql`'{}'`),
   updatedAt:     timestamp('updated_at').defaultNow().notNull(),
 });
 export type PortfolioSnapshot = typeof portfolioSnapshots.$inferSelect;
-
