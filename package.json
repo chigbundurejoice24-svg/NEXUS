@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "concurrently \"vite\" \"tsx watch server/_core/index.ts\"",
-    "build": "vite build && rm -f dist/api/index.js && esbuild api/index.ts --bundle --platform=node --packages=external --format=cjs --outfile=dist/api/index.js --log-level=error",
+    "build": "vite build && rm -f dist/api/index.js && rm -rf dist/api/ && esbuild api/server.ts --bundle --platform=node --packages=external --format=cjs --outfile=dist/api/server.js --log-level=error",
     "preview": "vite preview"
   },
   "dependencies": {
