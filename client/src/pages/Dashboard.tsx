@@ -1,42 +1,50 @@
+/**
+ * Dashboard.tsx — Main home screen
+ * All imports at top. All hooks called before any derived values.
+ */
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Send, Download, PlusCircle, ArrowLeftRight, Eye, EyeOff,
   TrendingUp, ChevronRight, Wallet, Plus, Copy, Check,
 } from "lucide-react";
-// Inline constants — no mockData dependency
-const QUICK_ACTIONS = [
-  { id: 'send',     title: 'Send',     icon: 'Send',            href: '/send' },
-  { id: 'receive',  title: 'Receive',  icon: 'Download',        href: '/receive' },
-  { id: 'fund',     title: 'Fund',     icon: 'PlusCircle',      href: '/fund' },
-  { id: 'exchange', title: 'Swap',     icon: 'ArrowLeftRight',  href: '/exchange' },
-];
-import { useState } from "react";
 import { useWalletStore } from "@/hooks/useWalletStore";
 import { useNgnRate } from "@/hooks/useNgnRate";
 import { useCurrentUser } from "@/hooks/useAuth";
+
+const QUICK_ACTIONS = [
+  { id: "send",     title: "Send",     icon: "Send",           href: "/send" },
+  { id: "receive",  title: "Receive",  icon: "Download",       href: "/receive" },
+  { id: "fund",     title: "Fund",     icon: "PlusCircle",     href: "/fund" },
+  { id: "exchange", title: "Swap",     icon: "ArrowLeftRight", href: "/exchange" },
+];
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [showBalance, setShowBalance] = useState(true);
   const [copiedAddr, setCopiedAddr] = useState(false);
-  const { wallets, totalUsd, totalNgn } = useWalletStore();
-  // Embedded wallet = auto-generated BSC wallet from DB (always present after signup)
-  const embeddedWalletAddress: string | null = (user as any)?.walletAddress ?? null;
 
-  const hasRealWallets = wallets.length > 0;
+  // ── hooks must all be called before any derived values ──────────
+  const { wallets, totalUsd, totalNgn } = useWalletStore();
   const { rate: NGN_PER_USD } = useNgnRate();
   const { user } = useCurrentUser();
-  const firstName = (user as any)?.name?.split(" ")[0] ?? "there";
 
+  // ── derived values (safe — hooks are all above) ─────────────────
+  const firstName = user?.name?.split(" ")[0] ?? "there";
+  const embeddedWalletAddress: string | null = (user as any)?.walletAddress ?? null;
   const usdtNgn = NGN_PER_USD > 0 ? NGN_PER_USD : 1595.20;
+  const hasRealWallets = wallets.length > 0;
+
+  const primaryWallet = wallets[0] ?? (
+    embeddedWalletAddress
+      ? { address: embeddedWalletAddress, label: "My Aegis Wallet", balanceUsd: 0 }
+      : null
+  );
 
   const actionIconMap: Record<string, React.ElementType> = {
     Send, Download, PlusCircle, ArrowLeftRight,
   };
-
-  // Prefer manually added wallets; fall back to embedded wallet
-  const primaryWallet = wallets[0] ?? (embeddedWalletAddress ? { address: embeddedWalletAddress, label: "My Aegis Wallet", balanceUsd: 0 } : null);
 
   function copyWallet() {
     if (!primaryWallet) return;
@@ -75,6 +83,7 @@ export default function Dashboard() {
             <rect width="100%" height="100%" fill="url(#grid)"/>
           </svg>
         </div>
+
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
           <div className="space-y-4">
             <div>
@@ -95,8 +104,9 @@ export default function Dashboard() {
                   : "••••••"}
               </p>
             </div>
+
             <div className="flex flex-wrap gap-2">
-              {QUICK_ACTIONS.slice(0, 4).map((action) => {
+              {QUICK_ACTIONS.map((action) => {
                 const Icon = actionIconMap[action.icon] ?? Wallet;
                 return (
                   <button
@@ -112,7 +122,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Rate card */}
+          {/* Live rate */}
           <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 min-w-[180px]">
             <p className="text-xs text-white/60 mb-1">Today's Rate</p>
             <p className="text-xs text-white/60">1 USDT =</p>
@@ -125,7 +135,7 @@ export default function Dashboard() {
         </div>
       </motion.div>
 
-      {/* My Wallet card */}
+      {/* Primary Wallet */}
       {primaryWallet ? (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -152,7 +162,7 @@ export default function Dashboard() {
             <p className="text-xs font-mono text-aegis-primary-dark dark:text-white flex-1 truncate">
               {primaryWallet.address}
             </p>
-            <button onClick={copyWallet} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors flex-shrink-0">
+            <button onClick={copyWallet} className="p-1.5 rounded-lg hover:bg-black/5 transition-colors flex-shrink-0">
               {copiedAddr
                 ? <Check size={14} className="text-green-500" />
                 : <Copy size={14} className="text-aegis-tertiary-dark" />}
@@ -164,7 +174,7 @@ export default function Dashboard() {
               <p className="text-xs text-aegis-tertiary-dark">Balance</p>
               <p className="font-semibold text-aegis-primary-dark dark:text-white">
                 {showBalance
-                  ? `$${wallets[0]?.balanceUsd?.toLocaleString("en-US", { minimumFractionDigits: 2 }) ?? "0.00"}`
+                  ? `$${(primaryWallet as any).balanceUsd?.toLocaleString("en-US", { minimumFractionDigits: 2 }) ?? "0.00"}`
                   : "••••••"}
               </p>
             </div>
@@ -194,7 +204,7 @@ export default function Dashboard() {
         </motion.button>
       )}
 
-      {/* My Wallets row */}
+      {/* Wallets list */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-aegis-primary-dark dark:text-white">My Wallets</h3>
@@ -207,15 +217,19 @@ export default function Dashboard() {
         </div>
 
         {!hasRealWallets ? (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {["Tether", "USD Coin", "Bitcoin", "Ethereum"].map((name, i) => (
-              <div key={i} className="bg-card border border-border rounded-xl p-4">
-                <p className="text-xs text-aegis-tertiary-dark">Mock</p>
-                <p className="text-sm font-medium text-aegis-primary-dark dark:text-white mt-1">{name}</p>
-                <p className="text-xs text-aegis-tertiary-dark font-mono mt-1">0x3F...B66E</p>
-              </div>
-            ))}
-          </div>
+          <motion.button
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            onClick={() => navigate("/wallets")}
+            className="w-full bg-card border border-dashed border-border rounded-xl p-6 text-center hover:border-aegis-accent-purple/40 transition-all"
+          >
+            <div className="w-10 h-10 rounded-xl bg-aegis-bg-elevated flex items-center justify-center mx-auto mb-3">
+              <Plus size={20} className="text-aegis-accent-purple" />
+            </div>
+            <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">No wallets yet</p>
+            <p className="text-xs text-aegis-tertiary-dark mt-1">Tap to connect your first wallet and track live balances</p>
+          </motion.button>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {wallets.slice(0, 4).map((w) => (
@@ -231,9 +245,11 @@ export default function Dashboard() {
                   </div>
                   <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">{w.label}</p>
                 </div>
-                <p className="text-xs font-mono text-aegis-tertiary-dark truncate">{w.address.slice(0,8)}...{w.address.slice(-4)}</p>
+                <p className="text-xs font-mono text-aegis-tertiary-dark truncate">
+                  {w.address.slice(0,8)}...{w.address.slice(-4)}
+                </p>
                 <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white mt-2">
-                  {showBalance ? `$${w.balanceUsd?.toFixed(2) ?? "0.00"}` : "••••"}
+                  {showBalance ? `$${(w as any).balanceUsd?.toFixed(2) ?? "0.00"}` : "••••"}
                 </p>
               </motion.div>
             ))}
