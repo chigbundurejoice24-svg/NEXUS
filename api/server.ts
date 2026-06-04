@@ -1,4 +1,4 @@
-// Build: 20260604-performance — snapshot cron every 5min, debug route removed
+// Build: 20260604-security — debug route removed, cache bust — snapshot cron every 5min, debug route removed
 import express from "express";
 
 const ALLOWED_ORIGINS = [
