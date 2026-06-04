@@ -83,6 +83,16 @@ try {
     }
   });
 
+  // ── Debug: list registered tRPC procedures ──────────────────────────
+  app.get("/api/debug/routes", (_req: any, res: any) => {
+    try {
+      const keys = Object.keys((appRouter as any)._def?.procedures ?? {});
+      return res.json({ ok: true, procedures: keys, count: keys.length });
+    } catch(e: any) {
+      return res.status(500).json({ ok: false, error: e?.message });
+    }
+  });
+
   // ── Health — no version leak ──────────────────────────────────────────
   app.get("/api/health", (_req: any, res: any) => {
     res.json({ ok: true, ts: Date.now() });
