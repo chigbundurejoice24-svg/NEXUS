@@ -8,23 +8,28 @@ import { eq } from "drizzle-orm";
 const UNAUTHED_ERR_MSG = "You must be logged in to access this resource.";
 const NOT_ADMIN_ERR_MSG = "You do not have permission to perform this action.";
 
-// ── ADMIN EMAILS — single source of truth ────────────────────────────────────
-// Reads from ADMIN_EMAILS env var (comma-separated) in production.
-// Falls back to the hardcoded set for local dev and CI.
-// To add an admin: set ADMIN_EMAILS="info@cozanet.net,new@email.com" on Vercel.
-function buildAdminSet(): Set<string> {
+// ── ADMIN IDENTITY — three layers, all checked ───────────────────────────────
+// Layer 1: ADMIN_EMAILS env var (comma-separated) — production accounts by email
+// Layer 2: Hardcoded fallback (only used when ADMIN_EMAILS env is NOT set)
+// Layer 3: DB role = "admin" (set via admin.setRole mutation)
+//
+// All three are OR'd — any one passing grants access.
+// To add a new admin: set ADMIN_EMAILS env on Vercel (preferred) OR call setRole.
+
+function buildAdminEmailSet(): Set<string> {
   const env = process.env.ADMIN_EMAILS;
-  if (env) {
-    return new Set(env.split(",").map(e => e.toLowerCase().trim()).filter(Boolean));
+  if (env && env.trim()) {
+    const parsed = env.split(",").map(e => e.toLowerCase().trim()).filter(Boolean);
+    if (parsed.length > 0) return new Set(parsed);
   }
-  // Hard-coded fallback — these two accounts always have admin access
+  // Hard-coded fallback — only used in dev / when env var is missing
   return new Set([
     "info@cozanet.net",
     "fassdavid722@gmail.com",
   ]);
 }
 
-const ADMIN_EMAILS = buildAdminSet();
+const ADMIN_EMAIL_SET = buildAdminEmailSet();
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -43,9 +48,7 @@ const requireUser = t.middleware(async opts => {
 
 export const protectedProcedure = t.procedure.use(requireUser);
 
-// ── adminProcedure: verified against email whitelist, not DB role ─────────────
-// Even if someone sets role="admin" in the DB, this check will STILL
-// reject them unless their email is in ADMIN_EMAILS above.
+// ── adminProcedure: 3-layer check, fresh DB read every request ────────────────
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
@@ -53,18 +56,28 @@ export const adminProcedure = t.procedure.use(
       throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
     }
 
-    // Fetch email from DB fresh on every admin request — not from JWT
     const db = await getDb();
     let isAdmin = false;
+
     if (db) {
       try {
         const [row] = await db
-          .select({ email: users.email })
+          .select({ email: users.email, role: users.role })
           .from(users)
           .where(eq(users.id, ctx.user.id))
           .limit(1);
-        isAdmin = !!row?.email && ADMIN_EMAILS.has(row.email.toLowerCase().trim());
-      } catch { /* non-fatal — fail closed */ }
+
+        if (row) {
+          // Layer 1: email whitelist
+          const emailMatch = !!row.email && ADMIN_EMAIL_SET.has(row.email.toLowerCase().trim());
+          // Layer 2: DB role (set via admin.setRole)
+          const roleMatch = row.role === "admin";
+          isAdmin = emailMatch || roleMatch;
+        }
+      } catch (err) {
+        console.error("[adminProcedure] DB check failed:", err);
+        // fail closed — no access on DB error
+      }
     }
 
     if (!isAdmin) {
@@ -74,3 +87,9 @@ export const adminProcedure = t.procedure.use(
     return next({ ctx: { ...ctx, user: ctx.user } });
   })
 );
+
+// ── Helper exported for accounts.me and other places ─────────────────────────
+export function isAdminEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return ADMIN_EMAIL_SET.has(email.toLowerCase().trim());
+}
