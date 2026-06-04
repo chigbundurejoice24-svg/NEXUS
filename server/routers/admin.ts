@@ -9,7 +9,7 @@ import { router, adminProcedure } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
 import { users, transactions, accountAuditLogs, linkedWallets, notifications } from "../../drizzle/schema";
-import { eq, desc, count, sql, and, ne } from "drizzle-orm";
+import { eq, desc, count, sql, and, ne, isNull, ilike, or } from "drizzle-orm";
 
 export const adminRouter = router({
 
@@ -239,8 +239,8 @@ export const adminRouter = router({
       })
         .from(users)
         .where(or(
-          ilike(users.name,  \`%\${input.q}%\`),
-          ilike(users.email, \`%\${input.q}%\`),
+          ilike(users.name,  `%${input.q}%`),
+          ilike(users.email, `%${input.q}%`),
         ))
         .limit(20);
     }),
