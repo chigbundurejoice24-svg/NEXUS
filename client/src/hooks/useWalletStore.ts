@@ -1,76 +1,74 @@
 /**
  * useWalletStore.ts
- * React hook for the localStorage-backed wallet store.
- * Handles add/remove/rename + live balance fetching.
+ * Parallel fetch: prices + balances start at the same time.
+ * UI updates immediately as each piece resolves — no waterfalls.
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  loadWallets,
-  addWallet,
-  removeWallet,
-  renameWallet,
-  fetchWalletBalances,
-  fetchLivePrices,
-  type StoredWallet,
-  type WalletWithBalance,
+  loadWallets, addWallet, removeWallet, renameWallet,
+  fetchWalletBalances, fetchLivePrices,
+  type StoredWallet, type WalletWithBalance,
 } from "../lib/wallet-store";
 import { useNgnRate } from "./useNgnRate";
 
 const isValidAddress = (addr: string) => /^0x[0-9a-fA-F]{40}$/.test(addr);
 
+// Default prices — used immediately while real prices load in background
+const DEFAULT_PRICES = { eth: 3500, bnb: 620, matic: 0.85 };
+
 export function useWalletStore() {
   const { rate: NGN_PER_USD } = useNgnRate();
-  const [wallets, setWallets] = useState<StoredWallet[]>([]);
+  const [wallets, setWallets]   = useState<StoredWallet[]>(() => loadWallets());
   const [balances, setBalances] = useState<Record<string, WalletWithBalance>>({});
-  const [prices, setPrices] = useState({ eth: 3200, bnb: 580, matic: 0.85 });
-  const [pricesLoading, setPricesLoading] = useState(true);
+  const [prices, setPrices]     = useState(DEFAULT_PRICES);
+  const fetchingRef             = useRef<Set<string>>(new Set());
 
-  // Load wallets from localStorage on mount
+  // ── Fetch live prices once on mount (non-blocking) ──────────────
   useEffect(() => {
-    setWallets(loadWallets());
+    fetchLivePrices().then(setPrices);
   }, []);
 
-  // Fetch live prices once on mount
+  // ── Fetch balances for each wallet — starts immediately ─────────
+  // Re-runs when wallets list or prices change (prices update silently)
   useEffect(() => {
-    fetchLivePrices().then(p => { setPrices(p); setPricesLoading(false); });
-  }, []);
+    if (wallets.length === 0) return;
 
-  // Fetch balances when wallets or prices change
-  useEffect(() => {
-    if (wallets.length === 0 || pricesLoading) return;
+    wallets.forEach((w) => {
+      // Skip if already fetching this wallet in this cycle
+      if (fetchingRef.current.has(w.id)) return;
+      fetchingRef.current.add(w.id);
 
-    wallets.forEach(async (w) => {
+      // Show loading state immediately
       setBalances(prev => ({
         ...prev,
-        [w.id]: { ...w, balanceUsd: 0, assets: [], loading: true, error: null },
+        [w.id]: prev[w.id]?.loading === false
+          ? prev[w.id]  // already have data — don't flash loading again
+          : { ...w, balanceUsd: 0, assets: [], loading: true, error: null },
       }));
 
-      try {
-        const assets = await fetchWalletBalances(
-          w.address as `0x${string}`,
-          prices.eth,
-          prices.bnb,
-          prices.matic
-        );
-        const totalUsd = assets.reduce((s, a) => s + a.balanceUsd, 0);
-        setBalances(prev => ({
-          ...prev,
-          [w.id]: { ...w, balanceUsd: totalUsd, assets, loading: false, error: null },
-        }));
-      } catch (err: any) {
-        setBalances(prev => ({
-          ...prev,
-          [w.id]: { ...w, balanceUsd: 0, assets: [], loading: false, error: err.message },
-        }));
-      }
+      fetchWalletBalances(w.address as `0x${string}`, prices.eth, prices.bnb, prices.matic)
+        .then(assets => {
+          const totalUsd = assets.reduce((s, a) => s + a.balanceUsd, 0);
+          setBalances(prev => ({
+            ...prev,
+            [w.id]: { ...w, balanceUsd: totalUsd, assets, loading: false, error: null },
+          }));
+        })
+        .catch(err => {
+          setBalances(prev => ({
+            ...prev,
+            [w.id]: { ...w, balanceUsd: 0, assets: [], loading: false, error: err.message },
+          }));
+        })
+        .finally(() => fetchingRef.current.delete(w.id));
     });
-  }, [wallets, prices, pricesLoading]);
+  }, [wallets, prices]);
 
   const add = useCallback((address: string, label: string): string | null => {
     if (!isValidAddress(address)) return "Invalid Ethereum address";
-    const w = addWallet(address, label);
+    addWallet(address, label);
     setWallets(loadWallets());
-    return null; // no error
+    return null;
   }, []);
 
   const remove = useCallback((id: string) => {
