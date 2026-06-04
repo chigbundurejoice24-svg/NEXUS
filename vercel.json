@@ -11,27 +11,17 @@
   },
   "crons": [
     {
-      "path": "/api/cron/confirmations",
-      "schedule": "0 0 * * *"
+      "path": "/api/cron/snapshots",
+      "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/cron/snapshots",
-      "schedule": "0 0 * * *"
+      "path": "/api/cron/confirmations",
+      "schedule": "*/2 * * * *"
     }
   ],
   "rewrites": [
-    {
-      "source": "/api/trpc/:path*",
-      "destination": "/api/server"
-    },
-    {
-      "source": "/api/:path*",
-      "destination": "/api/server"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/index.html"
-    }
+    { "source": "/api/trpc/:path*", "destination": "/api/server" },
+    { "source": "/api/:path*",      "destination": "/api/server" },
+    { "source": "/(.*)",            "destination": "/index.html" }
   ]
 }
-
