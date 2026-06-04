@@ -1,19 +1,11 @@
 /**
  * Portfolio Aggregator Module
- * Fetches raw balances from multiple blockchains and aggregates them
- * Supports Ethereum, BSC, Polygon, and Arbitrum
- *
- * NOTE: Clients are created lazily (not at module load time) to avoid
- * cold-start crashes in Vercel serverless environments.
+ * Fetches raw balances from multiple blockchains and aggregates them.
  */
-
 import { createPublicClient, http, formatUnits } from 'viem';
 import { getCache, setCache } from '../cache';
 import { mainnet, bsc, polygon, arbitrum } from 'viem/chains';
 
-// ------------------------------------------------------------------
-// Type Definitions
-// ------------------------------------------------------------------
 export interface AggregatedAsset {
   network: string;
   token: string;
@@ -35,14 +27,11 @@ export interface Portfolio {
   totalWallets: number;
 }
 
-// ------------------------------------------------------------------
-// Chain Configuration — lazy clients
-// ------------------------------------------------------------------
 const CHAIN_CONFIGS = {
-  ethereum: { chain: mainnet, rpc: process.env.ETH_RPC_URL    ?? 'https://eth.llamarpc.com',       nativeToken: 'ETH'   },
-  bsc:      { chain: bsc,     rpc: process.env.BSC_RPC_URL    ?? 'https://bsc-dataseed.binance.org', nativeToken: 'BNB'  },
+  ethereum: { chain: mainnet, rpc: process.env.ETH_RPC_URL     ?? 'https://eth.llamarpc.com',               nativeToken: 'ETH'   },
+  bsc:      { chain: bsc,     rpc: process.env.BSC_RPC_URL     ?? 'https://bsc-dataseed.binance.org',        nativeToken: 'BNB'   },
   polygon:  { chain: polygon, rpc: process.env.POLYGON_RPC_URL ?? 'https://polygon-bor-rpc.publicnode.com', nativeToken: 'MATIC' },
-  arbitrum: { chain: arbitrum, rpc: process.env.ARB_RPC_URL   ?? 'https://arbitrum.llamarpc.com',  nativeToken: 'ETH'   },
+  arbitrum: { chain: arbitrum,rpc: process.env.ARB_RPC_URL     ?? 'https://arbitrum.llamarpc.com',          nativeToken: 'ETH'   },
 } as const;
 
 type ChainName = keyof typeof CHAIN_CONFIGS;
@@ -52,17 +41,11 @@ const _clients: Partial<Record<ChainName, ReturnType<typeof createPublicClient>>
 function getClient(chainName: ChainName) {
   if (!_clients[chainName]) {
     const cfg = CHAIN_CONFIGS[chainName];
-    _clients[chainName] = createPublicClient({
-      chain: cfg.chain,
-      transport: http(cfg.rpc),
-    });
+    _clients[chainName] = createPublicClient({ chain: cfg.chain, transport: http(cfg.rpc) });
   }
   return _clients[chainName]!;
 }
 
-// ------------------------------------------------------------------
-// Token Configurations
-// ------------------------------------------------------------------
 interface TokenConfig {
   address: `0x${string}`;
   decimals: number;
@@ -102,65 +85,54 @@ const ERC20_ABI = [
   },
 ] as const;
 
-// ------------------------------------------------------------------
-// Balance helpers
-// ------------------------------------------------------------------
 async function fetchNativeBalance(chainName: ChainName, address: `0x${string}`): Promise<bigint> {
-  try {
-    return await getClient(chainName).getBalance({ address });
-  } catch {
-    return 0n;
-  }
+  try { return await getClient(chainName).getBalance({ address }); }
+  catch { return 0n; }
 }
 
 async function fetchERC20Balance(chainName: ChainName, address: `0x${string}`, token: TokenConfig): Promise<bigint> {
   try {
     const balance = await (getClient(chainName).readContract as any)({
-      address: token.address,
-      abi: ERC20_ABI,
-      functionName: 'balanceOf',
-      args: [address],
+      address: token.address, abi: ERC20_ABI, functionName: 'balanceOf', args: [address],
     });
     return BigInt(balance as string);
-  } catch {
-    return 0n;
-  }
+  } catch { return 0n; }
 }
 
 async function buildWalletPortfolio(wallet: `0x${string}`, label?: string): Promise<WalletAssets> {
-  // ⚡ Run ALL chain + token reads in parallel (was sequential — major speedup)
   const nativeTasks = (Object.entries(CHAIN_CONFIGS) as [ChainName, typeof CHAIN_CONFIGS[ChainName]][]).map(
-    async ([chainName, cfg]) => {
+    async ([chainName, cfg]): Promise<AggregatedAsset | null> => {
       const rawBalance = await fetchNativeBalance(chainName, wallet);
       if (rawBalance <= 0n) return null;
-      return { network: chainName, token: cfg.nativeToken, totalBalance: formatUnits(rawBalance, 18), decimals: 18, type: 'native' as const, rawTotal: rawBalance };
+      return { network: chainName, token: cfg.nativeToken, totalBalance: formatUnits(rawBalance, 18), decimals: 18, type: 'native', rawTotal: rawBalance };
     }
   );
 
   const erc20Tasks = (Object.entries(TOKEN_CONFIGS) as [string, Record<string, TokenConfig>][]).flatMap(
     ([chainName, tokens]) =>
-      (Object.values(tokens) as TokenConfig[]).map(async (tokenConfig) => {
+      (Object.values(tokens) as TokenConfig[]).map(async (tokenConfig): Promise<AggregatedAsset | null> => {
         const rawBalance = await fetchERC20Balance(chainName as ChainName, wallet, tokenConfig);
         if (rawBalance <= 0n) return null;
-        return { network: chainName, token: tokenConfig.symbol, totalBalance: formatUnits(rawBalance, tokenConfig.decimals), decimals: tokenConfig.decimals, type: 'erc20' as const, rawTotal: rawBalance };
+        return { network: chainName, token: tokenConfig.symbol, totalBalance: formatUnits(rawBalance, tokenConfig.decimals), decimals: tokenConfig.decimals, type: 'erc20', rawTotal: rawBalance };
       })
   );
 
+  // FIX: cast settled results correctly — value can be AggregatedAsset | null
   const results = await Promise.allSettled([...nativeTasks, ...erc20Tasks]);
   const assets: AggregatedAsset[] = results
-    .filter((r): r is PromiseFulfilledResult<AggregatedAsset> => r.status === 'fulfilled' && r.value !== null)
-    .map(r => r.value);
+    .filter((r): r is PromiseFulfilledResult<AggregatedAsset | null> => r.status === 'fulfilled')
+    .map(r => r.value)
+    .filter((v): v is AggregatedAsset => v !== null);
 
   return { wallet, label, assets };
 }
 
 export async function buildPortfolio(wallets: { address: `0x${string}`; label?: string }[]): Promise<Portfolio> {
-  // 15-second server-side cache keyed on sorted wallet list
   const cacheKey = `portfolio:${wallets.map(w => w.address).sort().join(':') || 'empty'}`;
   const cached = getCache<Portfolio>(cacheKey);
   if (cached) return cached;
 
-  const perWallet = await Promise.all(wallets.map((w) => buildWalletPortfolio(w.address, w.label)));
+  const perWallet = await Promise.all(wallets.map(w => buildWalletPortfolio(w.address, w.label)));
 
   const aggregatedMap = new Map<string, AggregatedAsset>();
   for (const wallet of perWallet) {
@@ -176,5 +148,7 @@ export async function buildPortfolio(wallets: { address: `0x${string}`; label?: 
     }
   }
 
-  return { aggregatedAssets: Array.from(aggregatedMap.values()), perWallet, totalWallets: wallets.length };
+  const result: Portfolio = { aggregatedAssets: Array.from(aggregatedMap.values()), perWallet, totalWallets: wallets.length };
+  setCache(cacheKey, result, 15_000);
+  return result;
 }
