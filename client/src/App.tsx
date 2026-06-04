@@ -15,6 +15,9 @@ import Settings from '@/pages/Settings'
 import Profile from '@/pages/Profile'
 import DeveloperAPI from '@/pages/DeveloperAPI'
 import AdminConsole from '@/pages/AdminConsole'
+import Help from '@/pages/Help'
+import Notifications from '@/pages/Notifications'
+import BuyCozanet from '@/pages/BuyCozanet'
 import { getToken } from '@/lib/trpc'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -49,6 +52,7 @@ export default function App() {
         <Route path="/api"          element={<DeveloperAPI />} />
         <Route path="/admin"        element={<AdminConsole />} />
         <Route path="/help"         element={<Help />} />
+        <Route path="/buy-cozanet"  element={<BuyCozanet />} />
         <Route path="/notifications" element={<Notifications />} />
       </Route>
 
