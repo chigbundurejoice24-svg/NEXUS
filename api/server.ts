@@ -74,8 +74,8 @@ try {
   // ── Snapshot cron (every 5 min via Vercel cron) ───────────────────────
   app.get("/api/cron/snapshots", async (_req: any, res: any) => {
     try {
-      const { runSnapshotUpdate } = await import("../server/lib/wallets/snapshot-updater");
-      const result = await runSnapshotUpdate();
+      const { updateStalePortfolioSnapshots } = await import("../server/lib/wallets/snapshot-updater");
+      const result = await updateStalePortfolioSnapshots();
       return res.json({ ok: true, ...result });
     } catch (e: any) {
       console.error("[Cron] Snapshot updater error:", e?.message);
