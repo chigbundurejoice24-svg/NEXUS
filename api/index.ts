@@ -69,6 +69,19 @@ try {
     }
   });
 
+
+  // ── Portfolio snapshot refresher cron ─────────────────────────────
+  app.get("/api/cron/snapshots", async (_req: any, res: any) => {
+    try {
+      const { updateStalePortfolioSnapshots } = await import("../server/lib/wallets/snapshot-updater");
+      const result = await updateStalePortfolioSnapshots();
+      return res.json({ ok: true, ...result });
+    } catch (e: any) {
+      console.error("[Cron] Snapshot updater error:", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message });
+    }
+  });
+
   // ── Health — no version leak ──────────────────────────────────────────
   app.get("/api/health", (_req: any, res: any) => {
     res.json({ ok: true, ts: Date.now() });
