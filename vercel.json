@@ -7,6 +7,9 @@
   "functions": {
     "api/server.ts": {
       "maxDuration": 30
+    },
+    "api/db-setup.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
