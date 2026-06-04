@@ -1,10 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import {
-  LayoutDashboard, Wallet, Send, Download, PlusCircle,
-  Receipt, ArrowLeftRight, TrendingUp, Sparkles, Gift,
-  Settings, Code, Sun, Moon, Loader2,
-} from "lucide-react";
+import { ArrowLeftRight, Bell, Code, Download, Gift, LayoutDashboard, LifeBuoy, Loader2, Moon, PlusCircle, Receipt, Send, Settings, Sparkles, Sun, TrendingUp, Wallet} from "lucide-react";
 import { useCozanetStatus } from "@/hooks/useCozanetStatus";
 import { useCurrentUser } from "@/hooks/useAuth";
 

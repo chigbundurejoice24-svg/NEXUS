@@ -212,3 +212,43 @@ export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;
 // LEGACY SHIM (keep for backwards compat)
 // ─────────────────────────────────────────────
 export const userWallets = linkedWallets;
+
+// ── Support / Customer Care ───────────────────────────────────────
+export const ticketStatusEnum   = pgEnum("ticket_status",   ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]);
+export const ticketPriorityEnum = pgEnum("ticket_priority", ["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
+
+export const supportTickets = pgTable("support_tickets", {
+  id:        integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId:    integer("user_id").notNull().references(() => users.id),
+  subject:   varchar("subject",  { length: 255 }).notNull(),
+  message:   text("message").notNull(),
+  status:    ticketStatusEnum("status").default("OPEN").notNull(),
+  priority:  ticketPriorityEnum("priority").default("MEDIUM").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const supportReplies = pgTable("support_replies", {
+  id:        integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  ticketId:  integer("ticket_id").notNull().references(() => supportTickets.id),
+  userId:    integer("user_id").notNull().references(() => users.id),
+  message:   text("message").notNull(),
+  isAdmin:   boolean("is_admin").default(false).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ── Notifications (admin-broadcast + system) ──────────────────────
+export const notificationTypeEnum = pgEnum("notification_type", ["SYSTEM", "BROADCAST", "TRANSACTION", "SUPPORT", "PROMO"]);
+
+export const notifications = pgTable("notifications", {
+  id:         integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId:     integer("user_id").references(() => users.id), // NULL = broadcast to all
+  title:      varchar("title",   { length: 255 }).notNull(),
+  body:       text("body").notNull(),
+  type:       notificationTypeEnum("type").default("SYSTEM").notNull(),
+  isRead:     boolean("is_read").default(false).notNull(),
+  actionUrl:  varchar("action_url", { length: 512 }),
+  createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  sentByAdmin: integer("sent_by_admin").references(() => users.id), // who sent it
+});
+

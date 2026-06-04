@@ -11,6 +11,8 @@ import { cozanetRouter }      from "./cozanet";
 import { adminRouter }        from "./admin";
 import { portfolioRouter }    from "./portfolio";
 import { aiRouter }           from "./ai";
+import { supportRouter }       from "./support";
+import { notifyRouter }        from "./notify";
 
 export const appRouter = router({
   auth:         authRouter,
@@ -22,6 +24,8 @@ export const appRouter = router({
   admin:        adminRouter,
   portfolio:    portfolioRouter,
   ai:           aiRouter,
+  support:      supportRouter,
+  notify:       notifyRouter,
 });
 
 export type AppRouter = typeof appRouter;

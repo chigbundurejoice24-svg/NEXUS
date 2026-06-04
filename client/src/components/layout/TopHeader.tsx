@@ -1,15 +1,15 @@
 /**
  * TopHeader.tsx
  *
- * SECURITY & UX fixes:
- * - NO hardcoded name or avatar from mockData
- * - Shows real user name from trpc.auth.me
- * - Profile picture ONLY shown if user uploaded it themselves
- * - Falls back to initials avatar (same pattern as Sidebar)
+ * SECURITY & UX:
+ * - Real user name from trpc.auth.me
+ * - Live notification badge from trpc.notify.unreadCount
+ * - Bell navigates to /notifications page
  */
 import { Search, Bell, Menu } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useCurrentUser } from "@/hooks/useAuth";
+import { trpc } from "@/lib/trpc";
 
 interface TopHeaderProps {
   title: string;
@@ -21,7 +21,6 @@ function AvatarDisplay({ name, avatarUrl }: { name?: string | null; avatarUrl?: 
     ? name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase()
     : "?";
 
-  // Only render an <img> if the user explicitly set an avatarUrl themselves
   if (avatarUrl) {
     return (
       <img
@@ -32,7 +31,6 @@ function AvatarDisplay({ name, avatarUrl }: { name?: string | null; avatarUrl?: 
     );
   }
 
-  // Default: clean initials avatar using brand gradient
   return (
     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#5B3CF5] to-[#3B5BDB] flex items-center justify-center flex-shrink-0">
       <span className="text-white text-xs font-bold leading-none">{initials}</span>
@@ -41,11 +39,19 @@ function AvatarDisplay({ name, avatarUrl }: { name?: string | null; avatarUrl?: 
 }
 
 export default function TopHeader({ title, onMenuToggle }: TopHeaderProps) {
-  const navigate = useNavigate();
-  const { user } = useCurrentUser();
+  const navigate  = useNavigate();
+  const { user }  = useCurrentUser();
 
-  const displayName  = user?.name ?? (user ? "Account" : "");
-  const avatarUrl    = (user as any)?.avatarUrl ?? null;
+  // Live unread count — polls every 30s
+  const { data: notifData } = trpc.notify.unreadCount.useQuery(undefined, {
+    refetchInterval: 30_000,
+    staleTime:       15_000,
+    retry:           false,
+  });
+  const unreadCount = notifData?.count ?? 0;
+
+  const displayName = user?.name ?? (user ? "Account" : "");
+  const avatarUrl   = (user as any)?.avatarUrl ?? null;
 
   return (
     <header className="h-[72px] flex items-center justify-between px-4 sm:px-6 lg:px-8 border-b border-border bg-background/80 backdrop-blur-md sticky top-0 z-30">
@@ -69,13 +75,20 @@ export default function TopHeader({ title, onMenuToggle }: TopHeaderProps) {
           <Search size={18} className="text-aegis-secondary-dark" />
         </button>
 
-        {/* Notifications */}
-        <button className="relative w-10 h-10 flex items-center justify-center rounded-xl hover:bg-aegis-bg-elevated transition-colors">
-          <Bell size={18} className="text-aegis-secondary-dark" />
-          <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-aegis-success-green" />
+        {/* Notifications Bell — live badge */}
+        <button
+          onClick={() => navigate("/notifications")}
+          className="relative w-10 h-10 flex items-center justify-center rounded-xl hover:bg-aegis-bg-elevated transition-colors"
+        >
+          <Bell size={18} className={unreadCount > 0 ? "text-[#5B3CF5]" : "text-aegis-secondary-dark"} />
+          {unreadCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1 leading-none">
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
+          )}
         </button>
 
-        {/* User Profile — real name + initials, no hardcoded photo */}
+        {/* User Profile */}
         <button
           onClick={() => navigate("/profile")}
           className="flex items-center gap-2.5 pl-1 pr-3 py-1 rounded-full hover:bg-aegis-bg-elevated transition-colors"

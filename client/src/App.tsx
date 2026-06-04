@@ -48,6 +48,8 @@ export default function App() {
         <Route path="/profile"      element={<Profile />} />
         <Route path="/api"          element={<DeveloperAPI />} />
         <Route path="/admin"        element={<AdminConsole />} />
+        <Route path="/help"         element={<Help />} />
+        <Route path="/notifications" element={<Notifications />} />
       </Route>
 
       {/* Fallback */}
