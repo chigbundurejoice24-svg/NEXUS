@@ -77,7 +77,7 @@ export const adminRouter = router({
         db.select({ count: count() }).from(transactions).where(eq(transactions.userId, input.userId)),
         db.select().from(accountAuditLogs)
           .where(eq(accountAuditLogs.userId, input.userId))
-          .orderBy(desc(accountAuditLogs.createdAt))
+          .orderBy(desc((accountAuditLogs as any).createdAt))
           .limit(20),
       ]);
 
