@@ -83,13 +83,21 @@ try {
     }
   });
 
-  // ── Debug: list registered tRPC procedures ──────────────────────────
+  // ── Debug: detailed router inspection ──────────────────────────────
   app.get("/api/debug/routes", (_req: any, res: any) => {
     try {
-      const keys = Object.keys((appRouter as any)._def?.procedures ?? {});
-      return res.json({ ok: true, procedures: keys, count: keys.length });
+      const def = (appRouter as any)._def ?? {};
+      const procs = Object.keys(def.procedures ?? {});
+      const routerKeys = Object.keys(def.router?._def?.record ?? def.record ?? {});
+      return res.json({
+        ok: true,
+        procedures: procs,
+        procCount: procs.length,
+        routerKeys,
+        defKeys: Object.keys(def),
+      });
     } catch(e: any) {
-      return res.status(500).json({ ok: false, error: e?.message });
+      return res.status(500).json({ ok: false, error: e?.message, stack: e?.stack?.slice(0,500) });
     }
   });
 
