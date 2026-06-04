@@ -6,7 +6,7 @@
  */
 
 import { z } from "zod";
-import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
+import { protectedProcedure, publicProcedure, router, isAdminEmail } from "../_core/trpc";
 import {
   createUser,
   getUser,
@@ -32,12 +32,22 @@ export const accountsRouter = router({
     const userId = requireAuth(ctx.user?.id);
     const user = await getUser(userId);
     if (!user) return null;
-    // Compute isAdmin from ADMIN_EMAILS env (same logic as adminProcedure)
-    const adminSet = process.env.ADMIN_EMAILS
-      ? new Set(process.env.ADMIN_EMAILS.split(",").map((e: string) => e.toLowerCase().trim()))
-      : new Set(["info@cozanet.net", "fassdavid722@gmail.com"]);
-    const isAdmin = !!user.email && adminSet.has(user.email.toLowerCase().trim());
-    return { ...user, isAdmin };
+    // isAdmin: email whitelist OR DB role="admin" — matches adminProcedure exactly
+    const isAdmin = isAdminEmail(user.email) || user.role === "admin";
+    // Attach embedded wallet address for Dashboard
+    const { getDb } = await import("../db");
+    const { linkedWallets } = await import("../../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    let walletAddress: string | null = null;
+    if (db) {
+      const [w] = await db.select({ address: linkedWallets.address })
+        .from(linkedWallets)
+        .where(eq(linkedWallets.userId, userId))
+        .limit(1);
+      walletAddress = w?.address ?? null;
+    }
+    return { ...user, isAdmin, walletAddress };
   }),
 
   // ── Personal wallets ────────────────────────
