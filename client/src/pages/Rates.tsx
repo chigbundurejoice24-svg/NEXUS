@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { TrendingUp, TrendingDown, Clock } from "lucide-react";
 import { useRates } from "@/hooks/useRates";
+import { useNgnRate } from "@/hooks/useNgnRate";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const RATE_META: Record<string, { label: string; pair: string; color: string }> = {
@@ -13,10 +14,9 @@ const RATE_META: Record<string, { label: string; pair: string; color: string }> 
   "arbitrum:ETH":  { label: "Arb ETH",   pair: "ETH/USD",  color: "#28A0F0" },
 };
 
-const NGN_PER_USD = 1595.20;
-
 export default function Rates() {
   const { prices, isLoading, lastUpdated } = useRates();
+  const { rate: NGN_PER_USD } = useNgnRate();
 
   const entries = Object.entries(RATE_META).map(([key, meta]) => ({
     key,
