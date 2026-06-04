@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { TrendingUp, TrendingDown, RefreshCw, Clock } from "lucide-react";
+import { TrendingUp, TrendingDown, Clock } from "lucide-react";
 import { useRates } from "@/hooks/useRates";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -26,9 +26,9 @@ export default function Rates() {
 
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
-      {/* Header */}
+      {/* Header — no refresh watermark */}
       <div className="flex items-center justify-between">
-        <p className="text-sm text-aegis-secondary-dark">Live exchange rates · auto-refreshes every 30 s</p>
+        <p className="text-sm text-aegis-secondary-dark">Live exchange rates</p>
         {lastUpdated && (
           <div className="flex items-center gap-1.5 text-xs text-aegis-tertiary-dark">
             <Clock size={12} />
@@ -65,43 +65,37 @@ export default function Rates() {
                     <p className="text-xs text-aegis-tertiary-dark">{entry.label}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-green-50 dark:bg-green-900/20">
-                  <TrendingUp size={12} className="text-aegis-success-green" />
-                  <span className="text-xs font-medium text-aegis-success-green">Live</span>
+                <div className="flex items-center gap-1 text-xs font-medium text-green-500 bg-green-500/10 px-2 py-0.5 rounded-full">
+                  <TrendingUp size={10} />
+                  Live
                 </div>
               </div>
 
-              <p className="text-2xl font-semibold text-aegis-primary-dark dark:text-white">
-                ${entry.priceUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: entry.priceUsd > 1000 ? 2 : 6 })}
-              </p>
-              <p className="text-sm text-aegis-secondary-dark mt-1">
-                ≈ ₦{(entry.priceUsd * NGN_PER_USD).toLocaleString("en-US", { minimumFractionDigits: 2 })}
-              </p>
+              <div className="mb-3">
+                <p className="text-2xl font-bold text-aegis-primary-dark dark:text-white">
+                  {entry.priceUsd > 0
+                    ? `$${entry.priceUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : "—"}
+                </p>
+                {entry.priceUsd > 0 && (
+                  <p className="text-xs text-aegis-tertiary-dark mt-0.5">
+                    ≈ ₦{(entry.priceUsd * NGN_PER_USD).toLocaleString("en-NG", { minimumFractionDigits: 2 })}
+                  </p>
+                )}
+              </div>
 
-              <div className="mt-3 pt-3 border-t border-border flex justify-between text-xs text-aegis-tertiary-dark">
-                <span>Source: CoinGecko</span>
-                <span style={{ color: entry.color }}>● Live</span>
+              <div className="flex items-center justify-between pt-3 border-t border-border">
+                <span className="text-xs text-aegis-tertiary-dark">Source: CoinGecko</span>
+                <div className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: entry.color }} />
+                  <span className="text-xs text-aegis-tertiary-dark">Live</span>
+                </div>
               </div>
             </motion.div>
-          ))}
-      </div>
-
-      {/* NGN Reference */}
-      <div className="bg-card border border-border rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-aegis-primary-dark dark:text-white mb-3">Fiat Reference Rate</h3>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs text-aegis-tertiary-dark">USD/NGN</p>
-            <p className="text-xl font-semibold text-aegis-primary-dark dark:text-white mt-0.5">
-              ₦{NGN_PER_USD.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5 text-xs text-aegis-tertiary-dark">
-            <RefreshCw size={12} />
-            Reference rate
-          </div>
-        </div>
+          ))
+        }
       </div>
     </div>
   );
 }
+
