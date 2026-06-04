@@ -143,12 +143,12 @@ export const cozanetRouter = router({
 
       let cozanetOutRaw: bigint;
       try {
-        const amounts = await client.readContract({
+        const amounts = await (client.readContract as any)({
           address:      PANCAKE_ROUTER,
           abi:          PANCAKE_ABI,
           functionName: "getAmountsOut",
           args:         [amountIn, [BSC_USDT, CZN_ADDRESS]],
-        }) as bigint[];
+        }) as readonly bigint[];
         cozanetOutRaw = amounts[1];
       } catch (err: any) {
         throw new TRPCError({
