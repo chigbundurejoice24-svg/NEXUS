@@ -212,7 +212,6 @@ export const adminRouter = router({
       });
       return { success: true };
     }),
-})
 
   // ── Broadcast history ─────────────────────────────────────────────
   broadcastHistory: adminProcedure
