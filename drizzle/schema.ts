@@ -46,6 +46,7 @@ export const users = pgTable("users", {
   recoveryCredentialId: varchar("recovery_credential_id", { length: 512 }),
   recoveryWallet:       varchar("recovery_wallet",      { length: 42  }),
   kycStatus:            kycStatusEnum("kyc_status").default("NONE").notNull(),
+  suspended:            boolean("suspended").default(false).notNull(),
   createdAt:            timestamp("created_at").defaultNow().notNull(),
   updatedAt:            timestamp("updated_at").defaultNow().notNull(),
   lastSignedIn:         timestamp("last_signed_in").defaultNow().notNull(),
