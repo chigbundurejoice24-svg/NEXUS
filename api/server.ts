@@ -1,4 +1,4 @@
-// Build: 20260604-security — debug route removed, cache bust — snapshot cron every 5min, debug route removed
+// Build: 20260604-fixes — CORS expanded for preview deploys
 import express from "express";
 
 const ALLOWED_ORIGINS = [
@@ -7,6 +7,15 @@ const ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://localhost:3000",
 ];
+
+// Allow any Vercel preview URL for this project
+function isAllowedOrigin(origin: string): boolean {
+  if (!origin) return false;
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  // Allow all aegis-wvxz preview deployments
+  if (/^https:\/\/aegis-wvxz-[a-z0-9]+-cozycrypto-s-projects\.vercel\.app$/.test(origin)) return true;
+  return false;
+}
 
 let _handler: any = null;
 let _err: any = null;
@@ -31,10 +40,10 @@ try {
     next();
   });
 
-  // ── CORS — locked to allowed origins only ─────────────────────────────
+  // ── CORS ──────────────────────────────────────────────────────────────
   app.use((req: any, res: any, next: any) => {
     const origin = req.headers.origin ?? "";
-    if (ALLOWED_ORIGINS.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       res.setHeader("Access-Control-Allow-Origin",      origin);
       res.setHeader("Access-Control-Allow-Credentials", "true");
     }
@@ -53,15 +62,20 @@ try {
     next();
   });
 
+  // ── Health (no auth) ─────────────────────────────────────────────────
+  app.get("/api/health", (_req: any, res: any) => {
+    res.json({ ok: true, ts: Date.now() });
+  });
+
   // ── tRPC ──────────────────────────────────────────────────────────────
   app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
   app.use("/trpc",     createExpressMiddleware({ router: appRouter, createContext }));
 
-  // ── Snapshot cron (every 5 min) ───────────────────────────────────────
+  // ── Snapshot cron (every 5 min via Vercel cron) ───────────────────────
   app.get("/api/cron/snapshots", async (_req: any, res: any) => {
     try {
-      const { updateStalePortfolioSnapshots } = await import("../server/lib/wallets/snapshot-updater");
-      const result = await updateStalePortfolioSnapshots();
+      const { runSnapshotUpdate } = await import("../server/lib/wallets/snapshot-updater");
+      const result = await runSnapshotUpdate();
       return res.json({ ok: true, ...result });
     } catch (e: any) {
       console.error("[Cron] Snapshot updater error:", e?.message);
@@ -69,7 +83,7 @@ try {
     }
   });
 
-  // ── Confirmation poller cron (every 2 min) ───────────────────────────
+  // ── Confirmation poller cron ───────────────────────────────────────────
   app.get("/api/cron/confirmations", async (_req: any, res: any) => {
     try {
       const { pollConfirmations } = await import("../server/lib/transactions/confirmation-poller");
@@ -81,24 +95,21 @@ try {
     }
   });
 
-  // ── Health ────────────────────────────────────────────────────────────
-  app.get("/api/health", (_req: any, res: any) => {
-    res.json({ ok: true, ts: Date.now() });
-  });
-
   _handler = app;
+
 } catch (e: any) {
   _err = e;
-  console.error("[AEGIS BOOT]", e?.message, e?.stack?.slice(0, 400));
+  console.error("[Server Init Error]", e?.message, e?.stack);
 }
 
-module.exports = function handler(req: any, res: any) {
-  if (_err || !_handler) {
-    const isProd = process.env.NODE_ENV === "production";
-    return res.status(500).json({
-      ok: false,
-      error: isProd ? "Internal server error" : _err?.message,
-    });
+// ── Serverless export ─────────────────────────────────────────────────────────
+module.exports = (req: any, res: any) => {
+  if (_err) {
+    console.error("[Runtime] Module load error:", _err?.message);
+    return res.status(500).json({ error: "Server initialization failed", detail: _err?.message });
+  }
+  if (!_handler) {
+    return res.status(500).json({ error: "Handler not initialized" });
   }
   return _handler(req, res);
 };
