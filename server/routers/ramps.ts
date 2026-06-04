@@ -7,7 +7,6 @@ import { OnRampService } from "../lib/ramps/onramp-service";
 import { OffRampService } from "../lib/ramps/offramp-service";
 
 export const rampsRouter = router({
-  /** Best single on-ramp URL for this user */
   onramp: protectedProcedure
     .input(z.object({
       fiatAmount:     z.number().positive(),
@@ -16,14 +15,13 @@ export const rampsRouter = router({
     }))
     .query(async ({ input, ctx }) => {
       return OnRampService.getBestUrl({
-        userId: ctx.user!.id,
-        fiatAmount: input.fiatAmount,
-        fiatCurrency: input.fiatCurrency ?? "NGN",
+        userId:         ctx.user!.id,
+        fiatAmount:     input.fiatAmount,
+        fiatCurrency:   input.fiatCurrency ?? "NGN",
         cryptoCurrency: input.cryptoCurrency ?? "USDT",
       });
     }),
 
-  /** All on-ramp provider options with fees + estimated crypto */
   onrampAll: protectedProcedure
     .input(z.object({
       fiatAmount:     z.number().positive(),
@@ -32,14 +30,13 @@ export const rampsRouter = router({
     }))
     .query(async ({ input, ctx }) => {
       return OnRampService.getAllUrls({
-        userId: ctx.user!.id,
-        fiatAmount: input.fiatAmount,
-        fiatCurrency: input.fiatCurrency ?? "NGN",
+        userId:         ctx.user!.id,
+        fiatAmount:     input.fiatAmount,
+        fiatCurrency:   input.fiatCurrency ?? "NGN",
         cryptoCurrency: input.cryptoCurrency ?? "USDT",
       });
     }),
 
-  /** Off-ramp quotes for bank payout */
   offrampQuote: protectedProcedure
     .input(z.object({
       usdtAmount: z.number().positive(),
@@ -48,15 +45,14 @@ export const rampsRouter = router({
     .query(async ({ input }) => {
       return OffRampService.getQuotes({
         usdtAmount: input.usdtAmount,
-        currency: input.currency ?? "NGN",
+        currency:   input.currency ?? "NGN",
       });
     }),
 
-  /** Initiate a bank payout */
   offrampPayout: protectedProcedure
     .input(z.object({
       transactionId:          z.string(),
-      recipientBankCode:      z.string(),
+      bankCode:               z.string(),   // FIX: was recipientBankCode
       recipientAccountNumber: z.string(),
       recipientName:          z.string(),
       amountFiat:             z.number().positive(),
@@ -64,12 +60,13 @@ export const rampsRouter = router({
     }))
     .mutation(async ({ input }) => {
       return OffRampService.initiatePayout({
-        transactionId:          input.transactionId,
-        recipientBankCode:      input.recipientBankCode,
-        recipientAccountNumber: input.recipientAccountNumber,
-        recipientName:          input.recipientName,
-        amountFiat:             input.amountFiat,
-        currency:               input.currency,
+        transactionId: input.transactionId,
+        bankCode:      input.bankCode,          // FIX: matches OffRampService signature
+        accountNumber: input.recipientAccountNumber,
+        accountName:   input.recipientName,
+        fiatAmount:    input.amountFiat,
+        currency:      input.currency,
+        quoteId:       "",                      // filled by client from offrampQuote
       });
     }),
 });
