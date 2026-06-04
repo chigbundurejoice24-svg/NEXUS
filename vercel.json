@@ -16,7 +16,7 @@
     },
     {
       "path": "/api/cron/snapshots",
-      "schedule": "0 * * * *"
+      "schedule": "0 0 * * *"
     }
   ],
   "rewrites": [
