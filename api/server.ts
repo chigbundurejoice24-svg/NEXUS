@@ -1,10 +1,10 @@
-// Build: 20260604-131959 — cache bust for notify router registration fix
+// Build: 20260604-performance — snapshot cron every 5min, debug route removed
 import express from "express";
 
 const ALLOWED_ORIGINS = [
   "https://aegis-wvxz.vercel.app",
-  "https://aegis.cozanet.net",   // future custom domain
-  "http://localhost:5173",        // local dev
+  "https://aegis.cozanet.net",
+  "http://localhost:5173",
   "http://localhost:3000",
 ];
 
@@ -13,8 +13,8 @@ let _err: any = null;
 
 try {
   const { createExpressMiddleware } = require("@trpc/server/adapters/express");
-  const { appRouter }  = require("../server/routers");
-  const { createContext } = require("../server/_core/context");
+  const { appRouter }               = require("../server/routers");
+  const { createContext }           = require("../server/_core/context");
 
   const app = express();
   app.use(express.json({ limit: "10mb" }));
@@ -22,12 +22,12 @@ try {
 
   // ── Security headers ──────────────────────────────────────────────────
   app.use((_req: any, res: any, next: any) => {
-    res.setHeader("X-Content-Type-Options",   "nosniff");
-    res.setHeader("X-Frame-Options",          "DENY");
-    res.setHeader("X-XSS-Protection",         "1; mode=block");
-    res.setHeader("Referrer-Policy",          "strict-origin-when-cross-origin");
-    res.setHeader("Permissions-Policy",       "geolocation=(), microphone=(), camera=()");
-    res.setHeader("Strict-Transport-Security","max-age=63072000; includeSubDomains; preload");
+    res.setHeader("X-Content-Type-Options",    "nosniff");
+    res.setHeader("X-Frame-Options",           "DENY");
+    res.setHeader("X-XSS-Protection",          "1; mode=block");
+    res.setHeader("Referrer-Policy",           "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy",        "geolocation=(), microphone=(), camera=()");
+    res.setHeader("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
     next();
   });
 
@@ -44,9 +44,9 @@ try {
     next();
   });
 
-  // ── Cron routes — protected by CRON_SECRET ───────────────────────────
+  // ── Cron routes — CRON_SECRET required ───────────────────────────────
   app.use("/api/cron", (req: any, res: any, next: any) => {
-    const secret = req.headers["x-cron-secret"] ?? req.query?.secret;
+    const secret = (req.headers["x-cron-secret"] as string) ?? (req.query?.secret as string);
     if (!secret || secret !== process.env.CRON_SECRET) {
       return res.status(401).json({ error: "Unauthorized" });
     }
@@ -57,21 +57,7 @@ try {
   app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
   app.use("/trpc",     createExpressMiddleware({ router: appRouter, createContext }));
 
-
-  // ── Confirmation poller cron ──────────────────────────────────────
-  app.get("/api/cron/confirmations", async (_req: any, res: any) => {
-    try {
-      const { pollConfirmations } = await import("../server/lib/transactions/confirmation-poller");
-      const result = await pollConfirmations();
-      return res.json({ ok: true, ...result });
-    } catch (e: any) {
-      console.error("[Cron] Confirmation poller error:", e?.message);
-      return res.status(500).json({ ok: false, error: e?.message });
-    }
-  });
-
-
-  // ── Portfolio snapshot refresher cron ─────────────────────────────
+  // ── Snapshot cron (every 5 min) ───────────────────────────────────────
   app.get("/api/cron/snapshots", async (_req: any, res: any) => {
     try {
       const { updateStalePortfolioSnapshots } = await import("../server/lib/wallets/snapshot-updater");
@@ -83,25 +69,19 @@ try {
     }
   });
 
-  // ── Debug: detailed router inspection ──────────────────────────────
-  app.get("/api/debug/routes", (_req: any, res: any) => {
+  // ── Confirmation poller cron (every 2 min) ───────────────────────────
+  app.get("/api/cron/confirmations", async (_req: any, res: any) => {
     try {
-      const def = (appRouter as any)._def ?? {};
-      const procs = Object.keys(def.procedures ?? {});
-      const routerKeys = Object.keys(def.router?._def?.record ?? def.record ?? {});
-      return res.json({
-        ok: true,
-        procedures: procs,
-        procCount: procs.length,
-        routerKeys,
-        defKeys: Object.keys(def),
-      });
-    } catch(e: any) {
-      return res.status(500).json({ ok: false, error: e?.message, stack: e?.stack?.slice(0,500) });
+      const { pollConfirmations } = await import("../server/lib/transactions/confirmation-poller");
+      const result = await pollConfirmations();
+      return res.json({ ok: true, ...result });
+    } catch (e: any) {
+      console.error("[Cron] Confirmation poller error:", e?.message);
+      return res.status(500).json({ ok: false, error: e?.message });
     }
   });
 
-  // ── Health — no version leak ──────────────────────────────────────────
+  // ── Health ────────────────────────────────────────────────────────────
   app.get("/api/health", (_req: any, res: any) => {
     res.json({ ok: true, ts: Date.now() });
   });
@@ -114,7 +94,6 @@ try {
 
 module.exports = function handler(req: any, res: any) {
   if (_err || !_handler) {
-    // Never leak internals in production
     const isProd = process.env.NODE_ENV === "production";
     return res.status(500).json({
       ok: false,
