@@ -8,7 +8,7 @@ import { z } from "zod";
 import { router, adminProcedure } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
-import { users, transactions, accountAuditLogs, linkedWallets } from "../../drizzle/schema";
+import { users, transactions, accountAuditLogs, linkedWallets, notifications } from "../../drizzle/schema";
 import { eq, desc, count, sql, and, ne } from "drizzle-orm";
 
 export const adminRouter = router({
@@ -220,8 +220,6 @@ export const adminRouter = router({
     .query(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const { notifications } = await import("../../drizzle/schema");
-      const { isNull, desc } = await import("drizzle-orm");
       return db.select()
         .from(notifications)
         .where(isNull(notifications.userId)) // broadcasts only
@@ -235,7 +233,6 @@ export const adminRouter = router({
     .query(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      const { ilike, or } = await import("drizzle-orm");
       return db.select({
         id: users.id, name: users.name, email: users.email,
         role: users.role, kycStatus: users.kycStatus, suspended: users.suspended,
