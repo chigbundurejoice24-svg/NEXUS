@@ -24,6 +24,7 @@ export function useCurrentUser() {
     isLoading: hasToken ? isLoading : false,
     isAuthenticated: !!data,
     isAdmin: !!raw?.isAdmin,
+    walletAddress: (raw?.walletAddress as string | null) ?? null,
     error,
   };
 }

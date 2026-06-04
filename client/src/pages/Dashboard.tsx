@@ -21,6 +21,8 @@ export default function Dashboard() {
   const [showBalance, setShowBalance] = useState(true);
   const [copiedAddr, setCopiedAddr] = useState(false);
   const { wallets, totalUsd, totalNgn } = useWalletStore();
+  // Embedded wallet = auto-generated BSC wallet from DB (always present after signup)
+  const embeddedWalletAddress: string | null = (user as any)?.walletAddress ?? null;
 
   const hasRealWallets = wallets.length > 0;
   const { rate: NGN_PER_USD } = useNgnRate();
@@ -33,7 +35,8 @@ export default function Dashboard() {
     Send, Download, PlusCircle, ArrowLeftRight,
   };
 
-  const primaryWallet = wallets[0] ?? null;
+  // Prefer manually added wallets; fall back to embedded wallet
+  const primaryWallet = wallets[0] ?? (embeddedWalletAddress ? { address: embeddedWalletAddress, label: "My Aegis Wallet", balanceUsd: 0 } : null);
 
   function copyWallet() {
     if (!primaryWallet) return;

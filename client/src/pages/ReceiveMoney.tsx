@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Copy, Check, Share2, ChevronDown, AlertTriangle } from "lucide-react";
 import { useWallets } from "@/hooks/useWallets";
+import { useCurrentUser } from "@/hooks/useAuth";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const CHAIN_NAMES: Record<number, string> = {
@@ -44,6 +45,7 @@ function QRCode({ address }: { address: string }) {
 
 export default function ReceiveMoney() {
   const { linkedWallets, linkedWalletsLoading } = useWallets();
+  const { walletAddress: embeddedAddress } = useCurrentUser();
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [showDropdown, setShowDropdown] = useState(false);
   const [copied, setCopied] = useState(false);

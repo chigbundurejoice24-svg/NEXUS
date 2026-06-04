@@ -8,6 +8,7 @@
  */
 
 import { createPublicClient, http, formatUnits } from 'viem';
+import { getCache, setCache } from '../cache';
 import { mainnet, bsc, polygon, arbitrum } from 'viem/chains';
 
 // ------------------------------------------------------------------
@@ -38,10 +39,10 @@ export interface Portfolio {
 // Chain Configuration — lazy clients
 // ------------------------------------------------------------------
 const CHAIN_CONFIGS = {
-  ethereum: { chain: mainnet, rpc: 'https://eth.llamarpc.com',         nativeToken: 'ETH'  },
-  bsc:      { chain: bsc,     rpc: 'https://bsc-rpc.publicnode.com',   nativeToken: 'BNB'  },
-  polygon:  { chain: polygon, rpc: 'https://polygon-rpc.com',          nativeToken: 'MATIC' },
-  arbitrum: { chain: arbitrum, rpc: 'https://arbitrum.llamarpc.com',   nativeToken: 'ETH'  },
+  ethereum: { chain: mainnet, rpc: process.env.ETH_RPC_URL    ?? 'https://eth.llamarpc.com',       nativeToken: 'ETH'   },
+  bsc:      { chain: bsc,     rpc: process.env.BSC_RPC_URL    ?? 'https://bsc-dataseed.binance.org', nativeToken: 'BNB'  },
+  polygon:  { chain: polygon, rpc: process.env.POLYGON_RPC_URL ?? 'https://polygon-bor-rpc.publicnode.com', nativeToken: 'MATIC' },
+  arbitrum: { chain: arbitrum, rpc: process.env.ARB_RPC_URL   ?? 'https://arbitrum.llamarpc.com',  nativeToken: 'ETH'   },
 } as const;
 
 type ChainName = keyof typeof CHAIN_CONFIGS;
@@ -127,28 +128,38 @@ async function fetchERC20Balance(chainName: ChainName, address: `0x${string}`, t
 }
 
 async function buildWalletPortfolio(wallet: `0x${string}`, label?: string): Promise<WalletAssets> {
-  const assets: AggregatedAsset[] = [];
-
-  for (const [chainName, cfg] of Object.entries(CHAIN_CONFIGS) as [ChainName, typeof CHAIN_CONFIGS[ChainName]][]) {
-    const rawBalance = await fetchNativeBalance(chainName, wallet);
-    if (rawBalance > 0n) {
-      assets.push({ network: chainName, token: cfg.nativeToken, totalBalance: formatUnits(rawBalance, 18), decimals: 18, type: 'native', rawTotal: rawBalance });
+  // ⚡ Run ALL chain + token reads in parallel (was sequential — major speedup)
+  const nativeTasks = (Object.entries(CHAIN_CONFIGS) as [ChainName, typeof CHAIN_CONFIGS[ChainName]][]).map(
+    async ([chainName, cfg]) => {
+      const rawBalance = await fetchNativeBalance(chainName, wallet);
+      if (rawBalance <= 0n) return null;
+      return { network: chainName, token: cfg.nativeToken, totalBalance: formatUnits(rawBalance, 18), decimals: 18, type: 'native' as const, rawTotal: rawBalance };
     }
-  }
+  );
 
-  for (const [chainName, tokens] of Object.entries(TOKEN_CONFIGS)) {
-    for (const [, tokenConfig] of Object.entries(tokens)) {
-      const rawBalance = await fetchERC20Balance(chainName as ChainName, wallet, tokenConfig);
-      if (rawBalance > 0n) {
-        assets.push({ network: chainName, token: tokenConfig.symbol, totalBalance: formatUnits(rawBalance, tokenConfig.decimals), decimals: tokenConfig.decimals, type: 'erc20', rawTotal: rawBalance });
-      }
-    }
-  }
+  const erc20Tasks = (Object.entries(TOKEN_CONFIGS) as [string, Record<string, TokenConfig>][]).flatMap(
+    ([chainName, tokens]) =>
+      (Object.values(tokens) as TokenConfig[]).map(async (tokenConfig) => {
+        const rawBalance = await fetchERC20Balance(chainName as ChainName, wallet, tokenConfig);
+        if (rawBalance <= 0n) return null;
+        return { network: chainName, token: tokenConfig.symbol, totalBalance: formatUnits(rawBalance, tokenConfig.decimals), decimals: tokenConfig.decimals, type: 'erc20' as const, rawTotal: rawBalance };
+      })
+  );
+
+  const results = await Promise.allSettled([...nativeTasks, ...erc20Tasks]);
+  const assets: AggregatedAsset[] = results
+    .filter((r): r is PromiseFulfilledResult<AggregatedAsset> => r.status === 'fulfilled' && r.value !== null)
+    .map(r => r.value);
 
   return { wallet, label, assets };
 }
 
 export async function buildPortfolio(wallets: { address: `0x${string}`; label?: string }[]): Promise<Portfolio> {
+  // 15-second server-side cache keyed on sorted wallet list
+  const cacheKey = `portfolio:${wallets.map(w => w.address).sort().join(':') || 'empty'}`;
+  const cached = getCache<Portfolio>(cacheKey);
+  if (cached) return cached;
+
   const perWallet = await Promise.all(wallets.map((w) => buildWalletPortfolio(w.address, w.label)));
 
   const aggregatedMap = new Map<string, AggregatedAsset>();

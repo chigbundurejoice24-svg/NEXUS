@@ -16,7 +16,7 @@ import { deriveWalletAddress, EMBEDDED_WALLET_CHAIN_ID } from "../lib/wallets/wa
 
 const JWT_SECRET  = process.env.JWT_SECRET  || "aegis-dev-secret-change-in-prod";
 const RESEND_KEY  = process.env.RESEND_API_KEY ?? "";
-const FROM_EMAIL  = "noreply@cozanet.net";
+const FROM_EMAIL  = "noreply@aegis.cozanet.net";
 const CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ── OWNER EMAILS — only these 2 accounts may access Admin Console ──
@@ -137,8 +137,14 @@ export const authRouter = router({
       email:         users.email,
       emailVerified: users.emailVerified,
       kycStatus:     users.kycStatus,
-      avatarUrl:     users.loginMethod, // we repurpose this field if avatar set — see note
+      credentialId:  users.credentialId,
     }).from(users).where(eq(users.id, ctxUser.id)).limit(1);
+
+    // Fetch the user's embedded wallet (EMBEDDED type, created on registration)
+    const [embeddedWallet] = await db.select({ address: linkedWallets.address })
+      .from(linkedWallets)
+      .where(eq(linkedWallets.userId, ctxUser.id))
+      .limit(1);
 
     if (!full) return null;
 
@@ -153,6 +159,7 @@ export const authRouter = router({
       emailVerified: full.emailVerified,
       kycStatus:     full.kycStatus,
       isAdmin,        // only true for the 2 whitelisted emails
+      walletAddress: embeddedWallet?.address ?? null, // auto-created BSC wallet
       // We do NOT return: role, credentialId, publicKey, or any DB internals
     };
   }),
