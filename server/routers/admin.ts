@@ -212,4 +212,40 @@ export const adminRouter = router({
       });
       return { success: true };
     }),
+})
+
+  // ── Broadcast history ─────────────────────────────────────────────
+  broadcastHistory: adminProcedure
+    .input(z.object({ limit: z.number().default(20) }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { notifications } = await import("../../drizzle/schema");
+      const { isNull, desc } = await import("drizzle-orm");
+      return db.select()
+        .from(notifications)
+        .where(isNull(notifications.userId)) // broadcasts only
+        .orderBy(desc(notifications.createdAt))
+        .limit(input.limit);
+    }),
+
+  // ── Search users ─────────────────────────────────────────────────
+  searchUsers: adminProcedure
+    .input(z.object({ q: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { ilike, or } = await import("drizzle-orm");
+      return db.select({
+        id: users.id, name: users.name, email: users.email,
+        role: users.role, kycStatus: users.kycStatus, suspended: users.suspended,
+      })
+        .from(users)
+        .where(or(
+          ilike(users.name,  \`%\${input.q}%\`),
+          ilike(users.email, \`%\${input.q}%\`),
+        ))
+        .limit(20);
+    }),
+
 });
