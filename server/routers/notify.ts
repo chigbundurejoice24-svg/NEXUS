@@ -1,8 +1,8 @@
 /**
  * notify.ts — Notifications tRPC router
  *
- * Admin broadcasts a message → creates one notification per user (or a global one)
- * Users fetch their unread count + notification list
+ * Admin broadcasts — use EMAIL WHITELIST for admin check (same as auth.ts)
+ * DB role column is not used for admin gating (security fix)
  */
 import { z } from "zod";
 import { router, protectedProcedure } from "../_core/trpc";
@@ -11,11 +11,15 @@ import { getDb } from "../db";
 import { notifications, users } from "../../drizzle/schema";
 import { eq, desc, or, isNull, and, count } from "drizzle-orm";
 
-async function isAdmin(userId: number): Promise<boolean> {
+// Must match auth.ts whitelist exactly
+const ADMIN_EMAILS = new Set(["info@cozanet.net", "fassdavid722@gmail.com"]);
+
+async function assertAdmin(userId: number): Promise<void> {
   const db = await getDb();
-  if (!db) return false;
-  const [u] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
-  return u?.role === "admin";
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+  const [u] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+  const email = u?.email?.toLowerCase().trim() ?? "";
+  if (!ADMIN_EMAILS.has(email)) throw new TRPCError({ code: "FORBIDDEN", message: "Admin only" });
 }
 
 export const notifyRouter = router({
@@ -27,7 +31,6 @@ export const notifyRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Return notifications addressed to this user OR broadcast (userId = NULL)
       return db.select().from(notifications)
         .where(or(eq(notifications.userId, ctx.user.id), isNull(notifications.userId)))
         .orderBy(desc(notifications.createdAt))
@@ -56,7 +59,6 @@ export const notifyRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Only mark notifications that belong to this user or are broadcasts
       for (const id of input.ids) {
         await db.update(notifications)
           .set({ isRead: true })
@@ -74,8 +76,6 @@ export const notifyRouter = router({
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-    // For broadcasts: mark them read by inserting a "read receipt" is complex — 
-    // Instead we track per-user: update notifications for this user
     await db.update(notifications)
       .set({ isRead: true })
       .where(or(eq(notifications.userId, ctx.user.id), isNull(notifications.userId)));
@@ -93,15 +93,13 @@ export const notifyRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const admin = await isAdmin(ctx.user.id);
-      if (!admin) throw new TRPCError({ code: "UNAUTHORIZED", message: "Admin only" });
+      await assertAdmin(ctx.user.id); // email-whitelist check
 
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Insert as userId=NULL (global broadcast — all users see it)
       await db.insert(notifications).values({
-        userId:      null,
+        userId:      null,   // NULL = global broadcast
         title:       input.title,
         body:        input.body,
         type:        input.type,
@@ -112,7 +110,7 @@ export const notifyRouter = router({
       return { success: true };
     }),
 
-  // ── Admin: send to a specific user ───────────────────────────
+  // ── Admin: send to a specific user ────────────────────────────
   sendToUser: protectedProcedure
     .input(z.object({
       userId:    z.number(),
@@ -123,8 +121,7 @@ export const notifyRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const admin = await isAdmin(ctx.user.id);
-      if (!admin) throw new TRPCError({ code: "UNAUTHORIZED", message: "Admin only" });
+      await assertAdmin(ctx.user.id); // email-whitelist check
 
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
@@ -141,3 +138,4 @@ export const notifyRouter = router({
       return { success: true };
     }),
 });
+
