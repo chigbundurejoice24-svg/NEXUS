@@ -7,7 +7,19 @@ import {
   ChevronDown, Star, Check, Clock, ExternalLink,
   Wallet, Loader2, AlertCircle, RefreshCw, Copy, CheckCheck,
 } from 'lucide-react';
-import { africanCountries } from '@/data/mockData';
+// African countries — inline (no mockData dependency)
+const africanCountries = [
+  { name: 'Nigeria',      code: 'NG', currency: 'NGN', flag: '🇳🇬' },
+  { name: 'Ghana',        code: 'GH', currency: 'GHS', flag: '🇬🇭' },
+  { name: 'Kenya',        code: 'KE', currency: 'KES', flag: '🇰🇪' },
+  { name: 'South Africa', code: 'ZA', currency: 'ZAR', flag: '🇿🇦' },
+  { name: 'Uganda',       code: 'UG', currency: 'UGX', flag: '🇺🇬' },
+  { name: 'Tanzania',     code: 'TZ', currency: 'TZS', flag: '🇹🇿' },
+  { name: 'Rwanda',       code: 'RW', currency: 'RWF', flag: '🇷🇼' },
+  { name: 'Senegal',      code: 'SN', currency: 'XOF', flag: '🇸🇳' },
+  { name: 'Côte d Ivoire',code: 'CI', currency: 'XOF', flag: '🇨🇮' },
+  { name: 'Ethiopia',     code: 'ET', currency: 'ETB', flag: '🇪🇹' },
+];
 import { useNgnRate } from '@/hooks/useNgnRate';
 import { trpc, getToken } from '@/lib/trpc';
 import { Skeleton } from '@/components/ui/skeleton';

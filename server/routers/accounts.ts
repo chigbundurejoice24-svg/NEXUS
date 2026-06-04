@@ -30,7 +30,14 @@ export const accountsRouter = router({
   // ── User ────────────────────────────────────
   me: protectedProcedure.query(async ({ ctx }) => {
     const userId = requireAuth(ctx.user?.id);
-    return getUser(userId);
+    const user = await getUser(userId);
+    if (!user) return null;
+    // Compute isAdmin from ADMIN_EMAILS env (same logic as adminProcedure)
+    const adminSet = process.env.ADMIN_EMAILS
+      ? new Set(process.env.ADMIN_EMAILS.split(",").map((e: string) => e.toLowerCase().trim()))
+      : new Set(["info@cozanet.net", "fassdavid722@gmail.com"]);
+    const isAdmin = !!user.email && adminSet.has(user.email.toLowerCase().trim());
+    return { ...user, isAdmin };
   }),
 
   // ── Personal wallets ────────────────────────

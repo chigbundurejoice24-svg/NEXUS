@@ -53,11 +53,11 @@ export default function Sidebar({
 }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user } = useCurrentUser();
+  const { user, isAdmin } = useCurrentUser();
   const { priceUsd, pointsBalance, discountPercent, isLoading: cznLoading } = useCozanetStatus();
 
   // Build nav — admin item appended ONLY when server confirms isAdmin
-  const navItems = user?.isAdmin
+  const navItems = isAdmin
     ? [...BASE_NAV, ADMIN_NAV]
     : BASE_NAV;
 

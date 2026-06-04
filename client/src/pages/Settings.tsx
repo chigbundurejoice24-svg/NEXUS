@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Shield, Wallet, Bell, Moon, Sun,
   BadgeCheck, KeyRound, Copy, Check, ExternalLink,
+  Mail, Loader2, CheckCircle2, XCircle,
 } from "lucide-react";
 import { useCurrentUser } from "@/hooks/useAuth";
 import { useWallets } from "@/hooks/useWallets";
@@ -30,7 +31,6 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-// ── sub-components ────────────────────────────────────────────────
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -43,12 +43,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function SettingRow({
-  icon: Icon,
-  label,
-  description,
-  action,
-  badge,
-  badgeColor = "gray",
+  icon: Icon, label, description, action, badge, badgeColor = "gray",
 }: {
   icon: React.ElementType;
   label: string;
@@ -82,7 +77,6 @@ function SettingRow({
   );
 }
 
-// ── Toggle ────────────────────────────────────────────────────────
 function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   return (
     <button
@@ -94,14 +88,149 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   );
 }
 
+// ── Email Verification Section ────────────────────────────────────
+function EmailVerification() {
+  const { user } = useCurrentUser();
+  const [email, setEmail]       = useState(user?.email ?? "");
+  const [code, setCode]         = useState("");
+  const [step, setStep]         = useState<"idle" | "sent" | "verified">(
+    user?.emailVerified ? "verified" : "idle"
+  );
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const sendCode = trpc.auth.sendVerificationCode.useMutation({
+    onSuccess: () => { setStep("sent"); setErrorMsg(null); },
+    onError: (e) => setErrorMsg(e.message),
+  });
+
+  const verify = trpc.auth.verifyEmail.useMutation({
+    onSuccess: (data) => {
+      if (data.verified) {
+        setStep("verified");
+        setErrorMsg(null);
+        // Refresh user data so badge updates everywhere
+        queryClient.invalidateQueries();
+      }
+    },
+    onError: (e) => setErrorMsg(e.message),
+  });
+
+  // Already verified — just show status
+  if (step === "verified" || user?.emailVerified) {
+    return (
+      <div className="px-5 py-4 flex items-center gap-4">
+        <div className="w-9 h-9 rounded-xl bg-green-100 dark:bg-green-900/20 flex items-center justify-center flex-shrink-0">
+          <CheckCircle2 size={18} className="text-green-500" />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">Email Verified</p>
+          <p className="text-xs text-aegis-tertiary-dark mt-0.5">{user?.email ?? email}</p>
+        </div>
+        <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+          Verified ✓
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-5 py-4 space-y-3">
+      <div className="flex items-center gap-3 mb-1">
+        <div className="w-9 h-9 rounded-xl bg-aegis-bg-elevated flex items-center justify-center flex-shrink-0">
+          <Mail size={16} className="text-aegis-accent-purple" />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">Email Verification</p>
+          <p className="text-xs text-aegis-tertiary-dark">Unlock $10,000/day transfer limit</p>
+        </div>
+        <span className="ml-auto text-[11px] font-medium px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
+          Unverified
+        </span>
+      </div>
+
+      {/* Step 1 — Enter email */}
+      {step === "idle" && (
+        <>
+          <input
+            type="email"
+            placeholder="your@email.com"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            className="w-full px-3 py-2.5 text-sm rounded-lg border border-border bg-aegis-bg-elevated text-aegis-primary-dark dark:text-white placeholder:text-aegis-tertiary-dark focus:outline-none focus:ring-2 focus:ring-aegis-accent-purple/30"
+          />
+          {errorMsg && (
+            <p className="flex items-center gap-1.5 text-xs text-red-500">
+              <XCircle size={12} /> {errorMsg}
+            </p>
+          )}
+          <button
+            onClick={() => {
+              if (email.trim()) sendCode.mutate({ email: email.trim() });
+            }}
+            disabled={sendCode.isPending || !email.trim()}
+            className="w-full py-2.5 gradient-brand text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {sendCode.isPending ? <><Loader2 size={14} className="animate-spin" /> Sending…</> : "Send Verification Code"}
+          </button>
+        </>
+      )}
+
+      {/* Step 2 — Enter 6-digit code */}
+      {step === "sent" && (
+        <>
+          <p className="text-xs text-aegis-secondary-dark">
+            A 6-digit code was sent to <span className="font-medium text-aegis-primary-dark dark:text-white">{email}</span>. Check your inbox (and spam folder).
+          </p>
+          <input
+            type="text"
+            inputMode="numeric"
+            maxLength={6}
+            placeholder="• • • • • •"
+            value={code}
+            onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            className="w-full px-3 py-2.5 text-sm font-mono tracking-[0.3em] text-center rounded-lg border border-border bg-aegis-bg-elevated text-aegis-primary-dark dark:text-white placeholder:text-aegis-tertiary-dark focus:outline-none focus:ring-2 focus:ring-aegis-accent-purple/30"
+          />
+          {errorMsg && (
+            <p className="flex items-center gap-1.5 text-xs text-red-500">
+              <XCircle size={12} /> {errorMsg}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={() => { setStep("idle"); setCode(""); setErrorMsg(null); }}
+              className="flex-1 py-2.5 border border-border rounded-lg text-sm text-aegis-secondary-dark hover:bg-aegis-bg-elevated"
+            >
+              Change Email
+            </button>
+            <button
+              onClick={() => { if (code.length === 6) verify.mutate({ code }); }}
+              disabled={verify.isPending || code.length < 6}
+              className="flex-1 py-2.5 gradient-brand text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              {verify.isPending ? <><Loader2 size={14} className="animate-spin" /> Verifying…</> : "Verify Code"}
+            </button>
+          </div>
+          <button
+            onClick={() => { if (email) sendCode.mutate({ email }); }}
+            disabled={sendCode.isPending}
+            className="text-xs text-aegis-accent-purple hover:opacity-80 underline w-full text-center"
+          >
+            Resend code
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────
 export default function Settings() {
   const { user } = useCurrentUser();
   const { linkedWallets } = useWallets();
-  const [darkMode, setDarkMode] = useState(document.documentElement.classList.contains("dark"));
+  const [darkMode, setDarkMode]         = useState(document.documentElement.classList.contains("dark"));
   const [notifications, setNotifications] = useState(true);
   const [recoveryWallet, setRecoveryWallet] = useState("");
-  const [recoveryMsg, setRecoveryMsg] = useState<string | null>(null);
+  const [recoveryMsg, setRecoveryMsg]   = useState<string | null>(null);
 
   const setRecoveryMut = trpc.accounts.setRecovery.useMutation({
     onSuccess: () => setRecoveryMsg("Recovery wallet saved ✓"),
@@ -137,8 +266,31 @@ export default function Settings() {
         />
       </Section>
 
+      {/* Security */}
+      <Section title="Security">
+        <SettingRow
+          icon={KeyRound}
+          label="Passkey"
+          description={user?.credentialId ? "Passkey active — biometric sign-in enabled" : "Passkey registered"}
+          badge="Active"
+          badgeColor="green"
+        />
+        <SettingRow
+          icon={BadgeCheck}
+          label="KYC Verification"
+          description={`Identity status: ${user?.kycStatus ?? "Not started"}`}
+          badge={user?.kycStatus === "VERIFIED" ? "Verified" : "Pending"}
+          badgeColor={user?.kycStatus === "VERIFIED" ? "green" : "yellow"}
+        />
+      </Section>
+
+      {/* Email Verification — LIVE */}
+      <Section title="Email Verification">
+        <EmailVerification />
+      </Section>
+
       {/* Wallet Details */}
-      <Section title="Wallet Details">
+      <Section title="Connected Wallets">
         {linkedWallets.length === 0 ? (
           <div className="px-5 py-6 text-center">
             <Wallet size={32} className="mx-auto mb-2 text-aegis-tertiary-dark" />
@@ -155,52 +307,33 @@ export default function Settings() {
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium text-aegis-primary-dark dark:text-white">{w.label ?? "My Wallet"}</p>
                   <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-aegis-bg-elevated text-aegis-tertiary-dark">
-                    External
+                    {(w as any).type ?? "External"}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
                   <p className="text-xs font-mono text-aegis-tertiary-dark">{shorten(w.address)}</p>
                   <CopyButton text={w.address} />
                   <a
-                    href={`https://etherscan.io/address/${w.address}`}
+                    href={`https://bscscan.com/address/${w.address}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="p-1.5 rounded-lg hover:bg-aegis-bg-elevated transition-colors"
-                    title="View on Etherscan"
+                    title="View on BscScan"
                   >
                     <ExternalLink size={12} className="text-aegis-tertiary-dark" />
                   </a>
                 </div>
-                <p className="text-[11px] text-aegis-tertiary-dark">All chains · Polygon primary</p>
               </div>
+              <button
+                onClick={() => removeMut.mutate({ walletId: (w as any).id })}
+                disabled={removeMut.isPending}
+                className="text-xs text-red-400 hover:text-red-500 transition-colors px-2 py-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/10"
+              >
+                Remove
+              </button>
             </div>
           ))
         )}
-      </Section>
-
-      {/* Security */}
-      <Section title="Security">
-        <SettingRow
-          icon={KeyRound}
-          label="Passkey"
-          description={user?.credentialId ? "Passkey active — biometric sign-in enabled" : "No passkey set up yet"}
-          badge={user?.credentialId ? "Active" : "Not Set"}
-          badgeColor={user?.credentialId ? "green" : "gray"}
-        />
-        <SettingRow
-          icon={BadgeCheck}
-          label="KYC Verification"
-          description={`Identity status: ${user?.kycStatus ?? "Not started"}`}
-          badge={user?.kycStatus === "VERIFIED" ? "Verified" : "Unverified"}
-          badgeColor={user?.kycStatus === "VERIFIED" ? "green" : "yellow"}
-        />
-        <SettingRow
-          icon={Shield}
-          label="Email Verification"
-          description={user?.email ?? "No email on file"}
-          badge={user?.emailVerified ? "Verified" : "Unverified"}
-          badgeColor={user?.emailVerified ? "green" : "yellow"}
-        />
       </Section>
 
       {/* Recovery wallet */}

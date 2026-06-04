@@ -16,14 +16,14 @@ type Tab = "overview" | "users" | "transactions";
 
 export default function AdminConsole() {
   const navigate = useNavigate();
-  const { user, isLoading } = useCurrentUser();
+  const { user, isLoading, isAdmin } = useCurrentUser();
   // Security: redirect non-admins immediately — no flash of admin content
   useEffect(() => {
-    if (!isLoading && !user?.isAdmin) {
+    if (!isLoading && !isAdmin) {
       navigate("/", { replace: true });
     }
   }, [user, isLoading, navigate]);
-  if (!user?.isAdmin) return null;
+  if (!isAdmin) return null;
 
   const [tab, setTab] = useState<Tab>("overview");
   const [userSearch, setUserSearch] = useState("");

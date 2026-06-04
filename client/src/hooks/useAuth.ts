@@ -18,10 +18,12 @@ export function useCurrentUser() {
     staleTime: 60_000,
     enabled: hasToken, // skip the network call entirely when not logged in
   });
+  const raw = (data as any) ?? null;
   return {
-    user: (data as any) ?? null,
+    user: raw,
     isLoading: hasToken ? isLoading : false,
     isAuthenticated: !!data,
+    isAdmin: !!raw?.isAdmin,
     error,
   };
 }

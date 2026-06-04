@@ -1,20 +1,19 @@
-import { useState } from 'react'
-import '../App.css'
+import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { getToken } from '@/lib/trpc'
 
+/**
+ * Home.tsx — smart entry point.
+ * Logged-in users → Dashboard. Everyone else → Auth.
+ */
 export default function Home() {
-  const [count, setCount] = useState(0)
-
-  return (
-    <>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-    </>
-  )
+  const navigate = useNavigate()
+  useEffect(() => {
+    if (getToken()) {
+      navigate('/', { replace: true })
+    } else {
+      navigate('/auth', { replace: true })
+    }
+  }, [navigate])
+  return null
 }

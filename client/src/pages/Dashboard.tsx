@@ -4,9 +4,13 @@ import {
   Send, Download, PlusCircle, ArrowLeftRight, Eye, EyeOff,
   TrendingUp, ChevronRight, Wallet, Plus, Copy, Check,
 } from "lucide-react";
-import {
-  quickActions, exchangeRates as mockRates, userProfile,
-} from "@/data/mockData";
+// Inline constants — no mockData dependency
+const QUICK_ACTIONS = [
+  { id: 'send',     title: 'Send',     icon: 'Send',            href: '/send' },
+  { id: 'receive',  title: 'Receive',  icon: 'Download',        href: '/receive' },
+  { id: 'fund',     title: 'Fund',     icon: 'PlusCircle',      href: '/fund' },
+  { id: 'exchange', title: 'Swap',     icon: 'ArrowLeftRight',  href: '/exchange' },
+];
 import { useState } from "react";
 import { useWalletStore } from "@/hooks/useWalletStore";
 import { useNgnRate } from "@/hooks/useNgnRate";
@@ -21,9 +25,9 @@ export default function Dashboard() {
   const hasRealWallets = wallets.length > 0;
   const { rate: NGN_PER_USD } = useNgnRate();
   const { user } = useCurrentUser();
-  const firstName = (user as any)?.name?.split(" ")[0] ?? userProfile.name.split(" ")[0];
+  const firstName = (user as any)?.name?.split(" ")[0] ?? "there";
 
-  const usdtNgn = mockRates.find(r => r.from === "USDT")?.rate ?? 1595.20;
+  const usdtNgn = NGN_PER_USD > 0 ? NGN_PER_USD : 1595.20;
 
   const actionIconMap: Record<string, React.ElementType> = {
     Send, Download, PlusCircle, ArrowLeftRight,
@@ -89,7 +93,7 @@ export default function Dashboard() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {quickActions.slice(0, 4).map((action) => {
+              {QUICK_ACTIONS.slice(0, 4).map((action) => {
                 const Icon = actionIconMap[action.icon] ?? Wallet;
                 return (
                   <button
@@ -98,7 +102,7 @@ export default function Dashboard() {
                     className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-xl text-sm font-medium transition-colors backdrop-blur-sm"
                   >
                     <Icon size={16} />
-                    {action.label}
+                    {action.title}
                   </button>
                 );
               })}
