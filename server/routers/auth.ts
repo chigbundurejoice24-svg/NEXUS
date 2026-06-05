@@ -293,4 +293,73 @@ export const authRouter = router({
 
       return { verified: true };
     }),
+
+  // ── Aliases so Settings.tsx doesn't need changes ───────────────
+  resendVerificationCode: protectedProcedure
+    .mutation(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [u] = await db.select({ email: users.email }).from(users).where(eq(users.id, ctx.user.id)).limit(1);
+      if (!u?.email) throw new TRPCError({ code: "BAD_REQUEST", message: "No email set — add your email first" });
+      const code      = generateCode();
+      const expiresAt = new Date(Date.now() + CODE_TTL_MS);
+      await db.update(users).set({ verificationCode: code, codeExpiresAt: expiresAt }).where(eq(users.id, ctx.user.id));
+      await sendResendEmail(u.email, code);
+      return { sent: true };
+    }),
+
+  // verifyEmail is an alias for verifyCode
+  verifyEmail: protectedProcedure
+    .input(z.object({ code: z.string().length(6) }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [u] = await db.select({ verificationCode: users.verificationCode, codeExpiresAt: users.codeExpiresAt })
+        .from(users).where(eq(users.id, ctx.user.id)).limit(1);
+      if (!u?.verificationCode) throw new TRPCError({ code: "BAD_REQUEST", message: "No code found — request a new one" });
+      if (u.codeExpiresAt && u.codeExpiresAt < new Date()) throw new TRPCError({ code: "BAD_REQUEST", message: "Code expired — request a new one" });
+      if (u.verificationCode !== input.code) throw new TRPCError({ code: "BAD_REQUEST", message: "Incorrect code" });
+      await db.update(users).set({ emailVerified: true, verificationCode: null, codeExpiresAt: null }).where(eq(users.id, ctx.user.id));
+      return { verified: true };
+    }),
+
+  // ── Update name + phone ─────────────────────────────────────────
+  updateProfile: protectedProcedure
+    .input(z.object({ name: z.string().min(1).max(80).optional(), phone: z.string().max(20).optional() }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const update: Record<string, any> = {};
+      if (input.name  !== undefined) update.name  = input.name.trim();
+      if (input.phone !== undefined) update.phone = input.phone.trim();
+      if (Object.keys(update).length === 0) return { updated: false };
+      await db.update(users).set(update).where(eq(users.id, ctx.user.id));
+      return { updated: true };
+    }),
+
+  // ── KYC submission (stores tier in DB, triggers manual review) ──
+  submitKyc: protectedProcedure
+    .input(z.object({
+      tier:        z.enum(["BASIC", "ENHANCED"]),
+      fullName:    z.string().min(2),
+      dateOfBirth: z.string().optional(),
+      country:     z.string().optional(),
+      idType:      z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      // Store as PENDING — manual review by admin
+      await db.update(users).set({
+        kycStatus: "PENDING",
+        name:      input.fullName,
+      }).where(eq(users.id, ctx.user.id));
+      // Log the submission
+      console.log(`[KYC] User ${ctx.user.id} submitted ${input.tier} KYC:`, input);
+      return { submitted: true };
+    }),
 });
