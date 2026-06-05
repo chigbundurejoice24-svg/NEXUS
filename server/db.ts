@@ -15,6 +15,20 @@ export async function getDb() {
     try {
       const pool = new Pool({ connectionString: process.env.DATABASE_URL });
       _db = drizzle(pool);
+       // Auto-create user_preferences if not exists (safe, idempotent)
+       try {
+         await pool.query(`
+           CREATE TABLE IF NOT EXISTS user_preferences (
+             user_id       INTEGER NOT NULL UNIQUE,
+             theme         VARCHAR(16) DEFAULT 'light',
+             country       VARCHAR(8),
+             currency      VARCHAR(8),
+             language      VARCHAR(16) DEFAULT 'en',
+             notifications BOOLEAN NOT NULL DEFAULT true,
+             updated_at    TIMESTAMP NOT NULL DEFAULT NOW()
+           )
+         `);
+       } catch { /* table already exists */ }
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
