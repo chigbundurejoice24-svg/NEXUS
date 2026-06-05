@@ -1,11 +1,15 @@
 /**
- * cozanet.ts — tRPC router
+ * cozanet.ts — tRPC router for CZN token operations
  *
- * Exposes Cozanet token status + DEX swap (buy) flow:
- *   getPrice  → public CZN/USD price
- *   getStatus → authenticated user discount tier, balance, fee preview
- *   buyQuote  → live USDT→CZN quote via PancakeSwap quoter (BSC, no API key)
- *   buy       → build unsigned tx batch: approve + swap + fee
+ * Verified 2026-06-05:
+ *   CZN = 0xE470E53147E199E6a6C02a50473fF8E84bD2d2CA (BSC BEP-20)
+ *   Decimals: 9 (NOT 18)
+ *   No direct USDT/CZN pair — route: USDT → WBNB → CZN
+ *   CZN/WBNB pair: 0xdf7576158840899eeab2081fd0ed46e3428a4c0d
+ *
+ * Gas model: Aegis sponsors gas (ZeroDev paymaster).
+ *   Aegis fee is charged in USDT from the user's wallet (separate transfer tx).
+ *   User needs 0 BNB — fee deducted in USDT only.
  */
 
 import { z } from "zod";
@@ -19,16 +23,22 @@ import {
   calculateFeeRaw,
 } from "../lib/cozanet/discount-calculator";
 import { fetchTokenPrices } from "../lib/prices/fetch-prices";
-import { TIER_DISPLAY, BASE_FEE_PERCENT, CZN_TOKEN } from "../lib/cozanet/discount-config";
+import {
+  TIER_DISPLAY, BASE_FEE_PERCENT, CZN_TOKEN, SWAP_ROUTE
+} from "../lib/cozanet/discount-config";
 import { encodeFunctionData, createPublicClient, http } from "viem";
 import { bsc } from "viem/chains";
 
-// ── Constants ──────────────────────────────────────────────────────
-const BSC_USDT      = "0x55d398326f99059fF775485246999027B3197955" as `0x${string}`;
-const CZN_ADDRESS   = "0xE470E53147E199E6a6C02a50473fF8E84bD2d2CA" as `0x${string}`;
-// PancakeSwap V2 Router on BSC (no API key needed, direct on-chain call)
+// ── Verified constants ─────────────────────────────────────────────
+const CZN_ADDRESS    = CZN_TOKEN.address;       // 0xE470E53147E199E6a6C02a50473fF8E84bD2d2CA
+const CZN_DECIMALS   = CZN_TOKEN.decimals;      // 9
+const BSC_USDT       = SWAP_ROUTE.USDT;         // 0x55d398326f99059fF775485246999027B3197955
+const WBNB           = SWAP_ROUTE.WBNB;         // 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c
+const SWAP_PATH      = SWAP_ROUTE.path;         // USDT → WBNB → CZN
+
+// PancakeSwap V2 Router — unchanged, always live on BSC
 const PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E" as `0x${string}`;
-// PancakeSwap V2 quoter ABI (getAmountsOut)
+
 const PANCAKE_ABI = [
   {
     name: "getAmountsOut",
@@ -60,44 +70,38 @@ const ERC20_ABI = [
     name: "approve",
     type: "function",
     stateMutability: "nonpayable",
-    inputs: [
-      { name: "spender", type: "address" },
-      { name: "amount",  type: "uint256" },
-    ],
+    inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }],
     outputs: [{ name: "", type: "bool" }],
   },
   {
     name: "transfer",
     type: "function",
     stateMutability: "nonpayable",
-    inputs: [
-      { name: "recipient", type: "address" },
-      { name: "amount",    type: "uint256" },
-    ],
+    inputs: [{ name: "recipient", type: "address" }, { name: "amount", type: "uint256" }],
     outputs: [{ name: "", type: "bool" }],
   },
 ] as const;
 
 const BSC_RPC = process.env.BSC_RPC_URL ?? "https://bsc-dataseed.binance.org";
 
-// ── Public: live CZN price ─────────────────────────────────────────
 export const cozanetRouter = router({
+
+  // ── Public: live CZN price ──────────────────────────────────────
   getPrice: publicProcedure.query(async () => {
     try {
       const prices = await fetchTokenPrices([CZN_TOKEN.coingeckoId]);
       const priceUsd = prices[CZN_TOKEN.coingeckoId] ?? 0;
-      return { priceUsd, symbol: CZN_TOKEN.symbol };
+      return { priceUsd, symbol: CZN_TOKEN.symbol, decimals: CZN_DECIMALS };
     } catch {
-      return { priceUsd: 0, symbol: CZN_TOKEN.symbol };
+      return { priceUsd: 0, symbol: CZN_TOKEN.symbol, decimals: CZN_DECIMALS };
     }
   }),
 
-  // ── Authenticated: full status with user discount tier ───────────
+  // ── Authenticated: discount tier + balance ───────────────────────
   getStatus: protectedProcedure
     .input(z.object({ exampleAmountUsdt: z.number().positive().optional() }))
     .query(async ({ input, ctx }) => {
-      const userId = ctx.user!.id;
-      const walletList = await getConsolidatedWalletList(userId);
+      const walletList = await getConsolidatedWalletList(ctx.user!.id);
       const portfolio  = walletList.length > 0 ? await buildPortfolio(walletList) : { aggregatedAssets: [] };
 
       let priceUsd = 0;
@@ -124,32 +128,36 @@ export const cozanetRouter = router({
         effectiveFeePercent: discount.effectiveFeePercent,
         exampleFeeUsdt,
         tiers:               TIER_DISPLAY,
+        contractAddress:     CZN_ADDRESS,
+        decimals:            CZN_DECIMALS,
+        pancakeswapUrl:      CZN_TOKEN.pancakeswapUrl,
+        bscscanUrl:          CZN_TOKEN.bscscanUrl,
       };
     }),
 
-  // ── Get a live DEX quote: USDT → CZN via PancakeSwap V2 on BSC ──
+  // ── Live DEX quote: USDT → WBNB → CZN ───────────────────────────
   buyQuote: protectedProcedure
     .input(z.object({
-      usdtAmountRaw: z.string(), // USDT in smallest unit (18 decimals on BSC)
+      usdtAmountRaw: z.string(), // USDT in raw units (18 decimals on BSC)
     }))
     .query(async ({ input, ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-
       const amountIn = BigInt(input.usdtAmountRaw);
       if (amountIn <= 0n) throw new TRPCError({ code: "BAD_REQUEST", message: "Amount must be > 0" });
 
-      // 1. On-chain quote via PancakeSwap V2 getAmountsOut
+      // On-chain quote: USDT → WBNB → CZN (3-hop)
       const client = createPublicClient({ chain: bsc, transport: http(BSC_RPC) });
 
       let cozanetOutRaw: bigint;
+      let midAmounts: readonly bigint[];
       try {
-        const amounts = await (client.readContract as any)({
+        midAmounts = await (client.readContract as any)({
           address:      PANCAKE_ROUTER,
           abi:          PANCAKE_ABI,
           functionName: "getAmountsOut",
-          args:         [amountIn, [BSC_USDT, CZN_ADDRESS]],
+          args:         [amountIn, SWAP_PATH],
         }) as readonly bigint[];
-        cozanetOutRaw = amounts[1];
+        // amounts = [USDT_in, WBNB_mid, CZN_out]
+        cozanetOutRaw = midAmounts[2];
       } catch (err: any) {
         throw new TRPCError({
           code:    "INTERNAL_SERVER_ERROR",
@@ -157,28 +165,47 @@ export const cozanetRouter = router({
         });
       }
 
-      // 2. Aegis fee with Cozanet discount
-      const walletList = await getConsolidatedWalletList(ctx.user.id);
+      if (!cozanetOutRaw || cozanetOutRaw === 0n) {
+        throw new TRPCError({
+          code:    "BAD_REQUEST",
+          message: "No liquidity available for this pair. Try a smaller amount.",
+        });
+      }
+
+      // Aegis fee (charged in USDT from wallet — gas is sponsored separately)
+      const walletList = await getConsolidatedWalletList(ctx.user!.id);
       const portfolio  = walletList.length > 0 ? await buildPortfolio(walletList) : { aggregatedAssets: [] };
       const cznBalance = getCozanetBalance(portfolio as any);
       const discount   = getDiscountResult(cznBalance);
       const feeRaw     = calculateFeeRaw(amountIn, cznBalance);
 
-      // 3. Slippage: 1% minimum out
+      // 1% slippage protection
       const amountOutMin = (cozanetOutRaw * 99n) / 100n;
 
+      // Human-readable price: USDT per CZN
+      const usdtFloat     = Number(amountIn)       / 1e18;
+      const cznFloat      = Number(cozanetOutRaw)  / 10**CZN_DECIMALS;
+      const pricePerToken = cznFloat > 0 ? (usdtFloat / cznFloat).toFixed(8) : "0";
+
       return {
-        usdtAmountRaw:   amountIn.toString(),
-        cozanetOutRaw:   cozanetOutRaw.toString(),
-        amountOutMin:    amountOutMin.toString(),
-        feeRaw:          feeRaw.toString(),
-        discountPercent: discount.discountPercent,
+        usdtAmountRaw:       amountIn.toString(),
+        cozanetOutRaw:       cozanetOutRaw.toString(),
+        amountOutMin:        amountOutMin.toString(),
+        feeRaw:              feeRaw.toString(),
+        discountPercent:     discount.discountPercent,
         effectiveFeePercent: discount.effectiveFeePercent,
-        priceImpactWarning: cozanetOutRaw === 0n,
+        pricePerToken,         // USDT per 1 CZN
+        priceImpactWarning:  cozanetOutRaw < (amountIn / 100n), // rough check
+        route:               "USDT → WBNB → CZN",
+        cznDecimals:         CZN_DECIMALS,
       };
     }),
 
-  // ── Build unsigned tx batch: approve + swap + fee ─────────────────
+  // ── Build unsigned tx batch ──────────────────────────────────────
+  // Tx 1: Approve USDT for PancakeSwap (swap amount + fee)
+  // Tx 2: Swap USDT → WBNB → CZN
+  // Tx 3: Transfer USDT fee to Aegis treasury (gas-free for user — fee in USDT)
+  // Gas: sponsored via ZeroDev paymaster — user pays 0 BNB
   buy: protectedProcedure
     .input(z.object({
       usdtAmountRaw: z.string(),
@@ -188,17 +215,15 @@ export const cozanetRouter = router({
       walletAddress: z.string(),
     }))
     .mutation(async ({ input, ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-
       const FEE_COLLECTOR = (process.env.FEE_COLLECTOR_ADDRESS
         ?? "0xb605333466d0122686511888bbb627a73f67f7e4") as `0x${string}`;
 
       const amountIn    = BigInt(input.usdtAmountRaw);
       const feeRaw      = BigInt(input.feeRaw);
-      const totalNeeded = amountIn + feeRaw;
+      const totalNeeded = amountIn + feeRaw; // total USDT to approve
       const deadline    = BigInt(Math.floor(Date.now() / 1000) + 1200); // 20 min
 
-      // Tx 1: Approve USDT for PancakeSwap router (amount + fee)
+      // Tx 1: Approve USDT → PancakeSwap Router (swap + fee combined approval)
       const approveTx = {
         to:    BSC_USDT,
         data:  encodeFunctionData({
@@ -210,7 +235,7 @@ export const cozanetRouter = router({
         label: `Approve ${(Number(totalNeeded) / 1e18).toFixed(2)} USDT`,
       };
 
-      // Tx 2: PancakeSwap swap — USDT → CZN
+      // Tx 2: Swap USDT → WBNB → CZN (3-hop route, no direct pair)
       const swapTx = {
         to:   PANCAKE_ROUTER,
         data: encodeFunctionData({
@@ -219,17 +244,18 @@ export const cozanetRouter = router({
           args:         [
             amountIn,
             BigInt(input.amountOutMin),
-            [BSC_USDT, CZN_ADDRESS],
+            SWAP_PATH,  // [USDT, WBNB, CZN]
             input.walletAddress as `0x${string}`,
             deadline,
           ],
         }),
         value: "0",
-        label: `Swap USDT → CZN on PancakeSwap`,
+        label: `Swap USDT → CZN via PancakeSwap (USDT → WBNB → CZN)`,
       };
 
-      // Tx 3: Fee transfer to Aegis treasury (only if fee > 0)
       const txBatch = [approveTx, swapTx];
+
+      // Tx 3: Aegis fee — deducted in USDT from wallet (gas-free for user)
       if (feeRaw > 0n) {
         txBatch.push({
           to:   BSC_USDT,
@@ -239,14 +265,15 @@ export const cozanetRouter = router({
             args:         [FEE_COLLECTOR, feeRaw],
           }),
           value: "0",
-          label: `Aegis fee (${(Number(feeRaw) / 1e18).toFixed(4)} USDT)`,
+          label: `Aegis fee (${(Number(feeRaw) / 1e18).toFixed(4)} USDT) — deducted from wallet`,
         });
       }
 
       return {
-        transactions:  txBatch,
-        chainId:       56,
-        gasSponsored:  true,
+        transactions: txBatch,
+        chainId:      56,
+        gasSponsored: true,  // ZeroDev paymaster covers BNB gas cost
+        feeNote:      "Gas is sponsored by Aegis. Fee deducted in USDT from your wallet.",
       };
     }),
 });
