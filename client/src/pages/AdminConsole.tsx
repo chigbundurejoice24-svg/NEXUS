@@ -3,7 +3,7 @@
  * Access enforced server-side (email whitelist) + client-side (isAdmin flag)
  * No UI references to "admin" role visible to users through notifications
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useCurrentUser } from "@/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
@@ -42,20 +42,31 @@ function StatCard({ label, value, icon: Icon, color }: { label: string; value: s
 }
 
 // ── Broadcast panel ──────────────────────────────────────────────────────────
+// ── Broadcast Panel ────────────────────────────────────────────────────────────
 function BroadcastPanel() {
-  const [title, setTitle]   = useState("");
-  const [body, setBody]     = useState("");
-  const [type, setType]     = useState<"BROADCAST"|"SYSTEM"|"PROMO">("BROADCAST");
-  const [mode, setMode]     = useState<"all"|"user">("all");
-  const [targetId, setTarget] = useState("");
-  const utils = trpc.useUtils();
+  const [title, setTitle]       = useState("");
+  const [body, setBody]         = useState("");
+  const [type, setType]         = useState<"BROADCAST"|"SYSTEM"|"PROMO">("BROADCAST");
+  const [mode, setMode]         = useState<"all"|"aegisId">("all");
+  const [aegisId, setAegisId]   = useState("");
+  const [preview, setPreview]   = useState<{id:number;name:string|null;email:string|null;aegisId:string|null}|null>(null);
+  const [lookupErr, setLookupErr] = useState("");
 
-  const broadcast  = trpc.notify.broadcast.useMutation({
-    onSuccess: () => { setTitle(""); setBody(""); utils.notify.list.invalidate(); },
-  });
-  const sendToUser = trpc.notify.sendToUser.useMutation({
-    onSuccess: () => { setTitle(""); setBody(""); setTarget(""); },
-  });
+  const utils = trpc.useUtils();
+  const broadcast  = trpc.notify.broadcast.useMutation({ onSuccess: () => { setTitle(""); setBody(""); } });
+  const sendToUser = trpc.notify.sendToUser.useMutation({ onSuccess: () => { setTitle(""); setBody(""); setAegisId(""); setPreview(null); } });
+  const lookup     = trpc.notify.lookupByAegisId.useQuery(
+    { aegisId: aegisId.toUpperCase().trim() },
+    { enabled: /^AEG-[A-Z0-9]{8}$/.test(aegisId.toUpperCase().trim()), retry: false }
+  );
+
+  // Update preview when lookup returns
+  useEffect(() => {
+    if (lookup.data) { setPreview(lookup.data as any); setLookupErr(""); }
+    else if (lookup.error) { setPreview(null); setLookupErr("User not found"); }
+    else if (!aegisId) { setPreview(null); setLookupErr(""); }
+  }, [lookup.data, lookup.error, aegisId]);
+
   const isPending = broadcast.isPending || sendToUser.isPending;
 
   function send() {
@@ -63,9 +74,8 @@ function BroadcastPanel() {
     if (mode === "all") {
       broadcast.mutate({ title: title.trim(), body: body.trim(), type });
     } else {
-      const uid = parseInt(targetId);
-      if (!uid || isNaN(uid)) return;
-      sendToUser.mutate({ userId: uid, title: title.trim(), body: body.trim(), type });
+      if (!preview) return;
+      sendToUser.mutate({ aegisId: aegisId.toUpperCase().trim(), title: title.trim(), body: body.trim(), type });
     }
   }
 
@@ -77,17 +87,51 @@ function BroadcastPanel() {
 
       {/* Recipient mode */}
       <div className="flex gap-2">
-        {(["all","user"] as const).map(m => (
-          <button key={m} onClick={() => setMode(m)}
+        {(["all","aegisId"] as const).map(m => (
+          <button key={m} onClick={() => { setMode(m); setPreview(null); setAegisId(""); }}
             className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${mode===m ? "border-[#5B3CF5] bg-[#5B3CF5]/20 text-[#5B3CF5]" : "border-border text-aegis-tertiary-dark"}`}>
-            {m === "all" ? "All Users" : "Specific User"}
+            {m === "all" ? "📢 All Users" : "🎯 Specific User"}
           </button>
         ))}
       </div>
 
-      {mode === "user" && (
-        <input value={targetId} onChange={e => setTarget(e.target.value)} placeholder="User ID (number)"
-          className="w-full px-3 py-2.5 rounded-xl bg-aegis-bg-elevated border border-border text-sm focus:outline-none focus:ring-1 focus:ring-[#5B3CF5] dark:text-white"/>
+      {/* Aegis ID input with live lookup */}
+      {mode === "aegisId" && (
+        <div className="space-y-2">
+          <div className="relative">
+            <input
+              value={aegisId}
+              onChange={e => { setAegisId(e.target.value.toUpperCase()); setPreview(null); }}
+              placeholder="AEG-XXXXXXXX"
+              maxLength={12}
+              className="w-full px-3 py-2.5 rounded-xl bg-aegis-bg-elevated border border-border text-sm font-mono focus:outline-none focus:ring-1 focus:ring-[#5B3CF5] dark:text-white"
+            />
+            {lookup.isLoading && (
+              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                <Loader2 size={14} className="animate-spin text-aegis-tertiary-dark"/>
+              </div>
+            )}
+          </div>
+
+          {/* Preview card */}
+          {preview && (
+            <div className="flex items-center gap-3 bg-green-500/10 border border-green-500/30 rounded-xl p-3">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#5B3CF5] to-[#3B5BDB] flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                {preview.name?.charAt(0).toUpperCase() ?? "?"}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-green-400">{preview.name ?? `User #${preview.id}`}</p>
+                <p className="text-xs text-aegis-tertiary-dark">{preview.email ?? "No email"} · {preview.aegisId}</p>
+              </div>
+              <CheckCircle size={16} className="text-green-400 flex-shrink-0"/>
+            </div>
+          )}
+          {lookupErr && (
+            <p className="text-xs text-red-400 flex items-center gap-1">
+              <XCircle size={12}/> {lookupErr}
+            </p>
+          )}
+        </div>
       )}
 
       {/* Type */}
@@ -100,27 +144,30 @@ function BroadcastPanel() {
         ))}
       </div>
 
-      <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Notification title"
+      <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Title"
         className="w-full px-3 py-2.5 rounded-xl bg-aegis-bg-elevated border border-border text-sm focus:outline-none focus:ring-1 focus:ring-[#5B3CF5] dark:text-white"/>
-      <textarea value={body} onChange={e => setBody(e.target.value)} rows={3} placeholder="Message content…"
+      <textarea value={body} onChange={e => setBody(e.target.value)} rows={3} placeholder="Message..."
         className="w-full px-3 py-2.5 rounded-xl bg-aegis-bg-elevated border border-border text-sm focus:outline-none focus:ring-1 focus:ring-[#5B3CF5] resize-none dark:text-white"/>
 
-      <button onClick={send} disabled={!title.trim() || !body.trim() || isPending}
-        className="w-full py-3 gradient-brand text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
+      <button
+        onClick={send}
+        disabled={!title.trim() || !body.trim() || isPending || (mode === "aegisId" && !preview)}
+        className="w-full py-3 bg-gradient-to-r from-[#5B3CF5] to-[#3B5BDB] text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
         {isPending ? <Loader2 size={16} className="animate-spin"/> : <Send size={16}/>}
-        {mode === "all" ? "Broadcast to All Users" : "Send to User"}
+        {mode === "all" ? "Broadcast to All Users" : preview ? `Send to ${preview.name ?? preview.aegisId}` : "Enter Aegis ID first"}
       </button>
 
-      {broadcast.isSuccess  && <p className="text-xs text-green-400 text-center">✅ Notification sent to all users</p>}
-      {sendToUser.isSuccess  && <p className="text-xs text-green-400 text-center">✅ Notification delivered</p>}
+      {broadcast.isSuccess  && <p className="text-xs text-green-400 text-center">✅ Broadcast delivered to all users</p>}
+      {sendToUser.isSuccess  && <p className="text-xs text-green-400 text-center">✅ Notification delivered to {preview?.name ?? aegisId}</p>}
       {(broadcast.isError || sendToUser.isError) && (
-        <p className="text-xs text-red-400 text-center">
-          ❌ {(broadcast.error ?? sendToUser.error as any)?.message ?? "Failed"}
-        </p>
+        <p className="text-xs text-red-400 text-center">❌ {((broadcast.error ?? sendToUser.error) as any)?.message ?? "Failed"}</p>
       )}
     </div>
   );
 }
+
+
+
 
 // ── Support panel ────────────────────────────────────────────────────────────
 function SupportPanel() {
