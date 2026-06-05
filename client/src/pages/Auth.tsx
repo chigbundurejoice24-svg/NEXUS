@@ -11,6 +11,7 @@ import {
   FileText, Check, ExternalLink,
 } from "lucide-react";
 import { trpc, setToken } from "@/lib/trpc";
+import { queryClient } from "@/lib/queryClient";
 import { CONSENT_ITEMS } from "@/lib/legal-policies";
 
 const CONSENT_STORAGE_KEY = "aegis_legal_consent_v1";
@@ -163,6 +164,8 @@ export default function Auth() {
       const credentialId = btoa(String.fromCharCode(...new Uint8Array(assertion.rawId)));
       const result       = await loginMutation.mutateAsync({ credentialId });
       setToken(result.token);
+      // Clear stale cache so auth.me refires fresh with new JWT
+      queryClient.clear();
       navigate("/");
     } catch (e: any) {
       setError(e.message?.includes("NOT_FOUND") || e.message?.includes("not registered")
