@@ -32,6 +32,7 @@ export const journalStatusEnum   = pgEnum("journal_status",   ["PENDING","POSTED
 export const users = pgTable("users", {
   id:                   serial("id").primaryKey(),
   openId:               varchar("open_id",              { length: 64  }).notNull().unique(),
+  aegisId:              varchar("aegis_id",             { length: 12  }).unique(),            // AEG-XXXXXXXX — permanent human-readable ID
   name:                 text("name"),
   email:                varchar("email",                { length: 320 }).unique(),
   emailVerified:        boolean("email_verified").default(false).notNull(),
