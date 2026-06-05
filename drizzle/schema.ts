@@ -243,18 +243,15 @@ export const supportReplies = pgTable("support_replies", {
 });
 
 // ── Notifications (admin-broadcast + system) ──────────────────────
-export const notificationTypeEnum = pgEnum("notification_type", ["SYSTEM", "BROADCAST", "TRANSACTION", "SUPPORT", "PROMO"]);
-
+// Matches actual DB columns — no action_url or sent_by_admin (not in Neon schema)
 export const notifications = pgTable("notifications", {
-  id:         integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  userId:     integer("user_id").references(() => users.id), // NULL = broadcast to all
-  title:      varchar("title",   { length: 255 }).notNull(),
-  body:       text("body").notNull(),
-  type:       notificationTypeEnum("type").default("SYSTEM").notNull(),
-  isRead:     boolean("is_read").default(false).notNull(),
-  actionUrl:  varchar("action_url", { length: 512 }),
-  createdAt:  timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  sentByAdmin: integer("sent_by_admin").references(() => users.id), // who sent it
+  id:        integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId:    integer("user_id").references(() => users.id), // NULL = broadcast to all
+  title:     varchar("title",  { length: 255 }).notNull(),
+  body:      text("body").notNull(),
+  type:      varchar("type",   { length: 64 }).default("SYSTEM").notNull(),
+  isRead:    boolean("is_read").default(false).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 // ── Portfolio Snapshots (pre-computed dashboard data) ─────────────────────
