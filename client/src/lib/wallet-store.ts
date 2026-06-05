@@ -7,6 +7,9 @@
  * - 60-second balance cache keyed per address — instant re-renders
  * - 5-minute price cache — no repeated CoinGecko calls
  * - Graceful: any failing chain returns 0, never blocks the UI
+ *
+ * IMPORTANT: viem clients are created LAZILY (on first use) to avoid
+ * synchronous module-level throws that crash React before mount.
  */
 import { createPublicClient, http, formatUnits } from "viem";
 import { mainnet, bsc, polygon, arbitrum } from "viem/chains";
@@ -34,12 +37,30 @@ function timedTransport(url: string) {
   return http(url, { timeout: 3_000, retryCount: 1 });
 }
 
-const clients = {
-  bsc:      createPublicClient({ chain: bsc,      transport: timedTransport("https://rpc.ankr.com/bsc") }),
-  ethereum: createPublicClient({ chain: mainnet,  transport: timedTransport("https://rpc.ankr.com/eth") }),
-  polygon:  createPublicClient({ chain: polygon,  transport: timedTransport("https://rpc.ankr.com/polygon") }),
-  arbitrum: createPublicClient({ chain: arbitrum, transport: timedTransport("https://rpc.ankr.com/arbitrum") }),
-};
+// LAZY client creation — avoids module-level throws crashing React on load
+let _clients: {
+  bsc: ReturnType<typeof createPublicClient>;
+  ethereum: ReturnType<typeof createPublicClient>;
+  polygon: ReturnType<typeof createPublicClient>;
+  arbitrum: ReturnType<typeof createPublicClient>;
+} | null = null;
+
+function getClients() {
+  if (!_clients) {
+    try {
+      _clients = {
+        bsc:      createPublicClient({ chain: bsc,      transport: timedTransport("https://rpc.ankr.com/bsc") }),
+        ethereum: createPublicClient({ chain: mainnet,  transport: timedTransport("https://rpc.ankr.com/eth") }),
+        polygon:  createPublicClient({ chain: polygon,  transport: timedTransport("https://rpc.ankr.com/polygon") }),
+        arbitrum: createPublicClient({ chain: arbitrum, transport: timedTransport("https://rpc.ankr.com/arbitrum") }),
+      };
+    } catch (e) {
+      console.error("[wallet-store] Failed to create viem clients:", e);
+      throw e;
+    }
+  }
+  return _clients;
+}
 
 const ERC20_ABI = [{
   constant: true, inputs: [{ name: "_owner", type: "address" }],
@@ -96,7 +117,6 @@ export function renameWallet(id: string, label: string, userId?: string | number
 export function migrateWalletsToUser(userId: string | number): void {
   try {
     const scopedKey = walletKey(userId);
-    // Only migrate if the scoped key is empty and legacy has data
     const legacy  = JSON.parse(localStorage.getItem(LEGACY_KEY) ?? "[]") as StoredWallet[];
     const scoped  = JSON.parse(localStorage.getItem(scopedKey)  ?? "[]") as StoredWallet[];
     if (legacy.length > 0 && scoped.length === 0) {
@@ -106,7 +126,7 @@ export function migrateWalletsToUser(userId: string | number): void {
   } catch { /* silent */ }
 }
 
-// ── Price fetch — CoinGecko + Binance fallback ────────────────────
+// ── Price fetch — Binance ────────────────────────────────────────
 export async function fetchLivePrices(): Promise<{eth:number;bnb:number;matic:number}> {
   const now = Date.now();
   if (_priceCache && now - _priceCache.ts < PRICE_TTL) return _priceCache.data;
@@ -143,7 +163,15 @@ export async function fetchWalletBalances(
     arbitrum: { symbol: "ETH",   price: ethPrice   },
   };
 
-  const tasks = (Object.entries(clients) as [string, typeof clients.bsc][]).flatMap(([net, client]) => {
+  // Get clients lazily — safe even if called from an async context
+  let clients: ReturnType<typeof getClients>;
+  try {
+    clients = getClients();
+  } catch {
+    return []; // viem init failed — return empty, don't crash the UI
+  }
+
+  const tasks = (Object.entries(clients) as [string, ReturnType<typeof createPublicClient>][]).flatMap(([net, client]) => {
     const np = nativePrice[net];
     const nativeT = Promise.race([
       client.getBalance({ address: addr }),
