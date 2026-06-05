@@ -3,11 +3,9 @@ import AppLayout from '@/components/layout/AppLayout'
 import Auth from '@/pages/Auth'
 import Dashboard from '@/pages/Dashboard'
 import Wallets from '@/pages/Wallets'
-import SendMoney from '@/pages/SendMoney'
-import ReceiveMoney from '@/pages/ReceiveMoney'
-import FundWallet from '@/pages/FundWallet'
 import Transactions from '@/pages/Transactions'
 import Exchange from '@/pages/Exchange'
+import Money from '@/pages/Money'
 import Rates from '@/pages/Rates'
 import AegisAI from '@/pages/AegisAI'
 import Rewards from '@/pages/Rewards'
@@ -43,11 +41,13 @@ export default function App() {
       }>
         <Route path="/"             element={<Dashboard />} />
         <Route path="/wallets"      element={<Wallets />} />
-        <Route path="/send"         element={<SendMoney />} />
-        <Route path="/receive"      element={<ReceiveMoney />} />
-        <Route path="/fund"         element={<FundWallet />} />
+        <Route path="/money"        element={<Money />} />
+        {/* Legacy redirects — old links still work */}
+        <Route path="/send"         element={<Navigate to="/money?tab=send" replace />} />
+        <Route path="/receive"      element={<Navigate to="/money?tab=receive" replace />} />
+        <Route path="/fund"         element={<Navigate to="/money?tab=fund" replace />} />
         <Route path="/transactions" element={<Transactions />} />
-        <Route path="/exchange"     element={<Exchange />} />
+        <Route path="/exchange"     element={<Navigate to="/money?tab=swap" replace />} />
         <Route path="/rates"        element={<Rates />} />
         <Route path="/ai"           element={<AegisAI />} />
         <Route path="/rewards"      element={<Rewards />} />
