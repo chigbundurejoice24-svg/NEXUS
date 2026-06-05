@@ -17,6 +17,7 @@ import { adminRouter }        from "./routers/admin";
 import { aiRouter }           from "./routers/ai";
 import { supportRouter }      from "./routers/support";
 import { notifyRouter }       from "./routers/notify";
+import { referralsRouter }    from "./routers/referrals";
 
 export const appRouter = router({
   system:       systemRouter,
@@ -31,6 +32,7 @@ export const appRouter = router({
   ai:           aiRouter,
   support:      supportRouter,
   notify:       notifyRouter,
+  referrals:    referralsRouter,
 });
 
 export type AppRouter = typeof appRouter;
