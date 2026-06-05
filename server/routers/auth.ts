@@ -1,12 +1,18 @@
 /**
- * auth.ts — passkey + JWT + email verification + KYC
+ * auth.ts — passkey + JWT + email verification
+ *
+ * WALLET LOCK:
+ *   Every auth operation that touches users also ensures the embedded wallet
+ *   exists in linked_wallets. If it's ever missing (e.g. after a DB migration
+ *   or admin action), it is silently re-created from the deterministic
+ *   deriveWalletAddress(credentialId) — the address is always the same.
  */
 import { z } from "zod";
 import { router, publicProcedure, protectedProcedure } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
 import { users, linkedWallets } from "../../drizzle/schema";
-import { eq, sql } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import jwt from "jsonwebtoken";
 import { deriveWalletAddress, EMBEDDED_WALLET_CHAIN_ID } from "../lib/wallets/wallet-generator";
 
@@ -15,7 +21,7 @@ const RESEND_KEY  = process.env.RESEND_API_KEY ?? "";
 const FROM_EMAIL  = "noreply@aegis.cozanet.net";
 const CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-// ── OWNER EMAILS — only these 2 accounts may access Admin Console ──
+// ── Admin emails — only these can access Admin Console ────────────
 const ADMIN_EMAILS = new Set([
   "info@cozanet.net",
   "fassdavid722@gmail.com",
@@ -24,9 +30,46 @@ const ADMIN_EMAILS = new Set([
 function signToken(userId: number): string {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: "7d" });
 }
-
 function generateCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+/**
+ * WALLET LOCK — ensures the user always has an embedded wallet record.
+ * Called after register and on every me() fetch.
+ * Idempotent: does nothing if the wallet already exists.
+ */
+async function ensureEmbeddedWallet(
+  db: Awaited<ReturnType<typeof getDb>>,
+  userId: number,
+  credentialId: string,
+): Promise<string> {
+  if (!db) return "";
+
+  // Check if wallet already exists
+  const [existing] = await db.select({ address: linkedWallets.address })
+    .from(linkedWallets)
+    .where(and(eq(linkedWallets.userId, userId), eq(linkedWallets.type, "EMBEDDED")))
+    .limit(1);
+
+  if (existing) return existing.address;
+
+  // Deterministically derive the address — same credentialId always gives same address
+  const walletAddress = deriveWalletAddress(credentialId);
+  try {
+    await db.insert(linkedWallets).values({
+      userId,
+      address:  walletAddress,
+      chainId:  EMBEDDED_WALLET_CHAIN_ID,
+      type:     "EMBEDDED",
+      label:    "My Aegis Wallet",
+    });
+    console.log(`[WalletLock] Re-created embedded wallet for user ${userId}: ${walletAddress}`);
+  } catch (e: any) {
+    // Unique constraint: wallet already created by a concurrent request — fine
+    if (!e?.message?.includes("unique")) console.error("[WalletLock] insert failed:", e?.message);
+  }
+  return walletAddress;
 }
 
 async function sendResendEmail(to: string, code: string): Promise<void> {
@@ -63,6 +106,7 @@ async function sendResendEmail(to: string, code: string): Promise<void> {
 }
 
 export const authRouter = router({
+  // ── Register new passkey account ────────────────────────────────
   register: publicProcedure
     .input(z.object({
       credentialId: z.string().min(1),
@@ -73,56 +117,74 @@ export const authRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
+      // Check for existing credential
       const existing = await db.select({ id: users.id })
         .from(users).where(eq(users.credentialId, input.credentialId)).limit(1);
-      if (existing.length > 0) throw new TRPCError({ code: "CONFLICT", message: "Credential already registered" });
+      if (existing.length > 0) {
+        throw new TRPCError({ code: "CONFLICT", message: "Credential already registered — try logging in instead" });
+      }
 
-      const openId = `passkey_${input.credentialId.slice(0, 48)}`;
+      // Build openId — safe slice of credentialId
+      const safeCredSlice = input.credentialId.replace(/[^a-zA-Z0-9+/=_-]/g, "").slice(0, 48);
+      const openId = `passkey_${safeCredSlice}`;
+
+      // Insert user — only columns that actually exist in the DB
       await db.insert(users).values({
-        openId, credentialId: input.credentialId, publicKey: input.publicKey,
-        name: input.displayName ?? null, lastSignedIn: new Date(),
+        openId,
+        credentialId: input.credentialId,
+        publicKey:    input.publicKey,
+        name:         input.displayName?.trim() ?? null,
+        lastSignedIn: new Date(),
       });
 
-      const [user] = await db.select({ id: users.id }).from(users).where(eq(users.openId, openId)).limit(1);
-      if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Registration failed" });
+      const [user] = await db.select({ id: users.id })
+        .from(users).where(eq(users.openId, openId)).limit(1);
+      if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Registration failed — please retry" });
 
-      const walletAddress = deriveWalletAddress(input.credentialId);
-      try {
-        await db.insert(linkedWallets).values({
-          userId: user.id, address: walletAddress,
-          chainId: EMBEDDED_WALLET_CHAIN_ID, type: "EMBEDDED", label: "My Aegis Wallet",
-        });
-      } catch { /* race condition — not fatal */ }
+      // 🔒 WALLET LOCK — create embedded wallet immediately
+      const walletAddress = await ensureEmbeddedWallet(db, user.id, input.credentialId);
 
-      return { token: signToken(user.id), user: { id: user.id }, walletAddress };
+      return {
+        token:         signToken(user.id),
+        user:          { id: user.id, name: input.displayName ?? null },
+        walletAddress,
+      };
     }),
 
+  // ── Login with existing passkey ─────────────────────────────────
   login: publicProcedure
     .input(z.object({ credentialId: z.string().min(1) }))
     .mutation(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
-      const [user] = await db.select({ id: users.id, name: users.name, email: users.email, emailVerified: users.emailVerified })
-        .from(users).where(eq(users.credentialId, input.credentialId)).limit(1);
-      if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "Passkey not registered — register first" });
+      const [user] = await db.select({
+        id:            users.id,
+        name:          users.name,
+        email:         users.email,
+        emailVerified: users.emailVerified,
+        credentialId:  users.credentialId,
+      }).from(users).where(eq(users.credentialId, input.credentialId)).limit(1);
+
+      if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "Passkey not registered — please register first" });
 
       await db.update(users).set({ lastSignedIn: new Date() }).where(eq(users.id, user.id));
 
-      const [wallet] = await db.select({ address: linkedWallets.address })
-        .from(linkedWallets).where(eq(linkedWallets.userId, user.id)).limit(1);
+      // 🔒 WALLET LOCK — restore wallet if it was lost
+      const walletAddress = await ensureEmbeddedWallet(db, user.id, user.credentialId ?? input.credentialId);
 
       return {
-        token: signToken(user.id),
-        user: { id: user.id, name: user.name, emailVerified: user.emailVerified },
-        walletAddress: wallet?.address ?? null,
+        token:         signToken(user.id),
+        user:          { id: user.id, name: user.name, emailVerified: user.emailVerified },
+        walletAddress,
       };
     }),
 
-  // ── Current user ────────────────────────────────────────────
+  // ── Current authenticated user ──────────────────────────────────
   me: publicProcedure.query(async ({ ctx }) => {
     const ctxUser = (ctx as any).user;
     if (!ctxUser) return null;
+
     const db = await getDb();
     if (!db) return null;
 
@@ -133,16 +195,23 @@ export const authRouter = router({
       emailVerified: users.emailVerified,
       kycStatus:     users.kycStatus,
       credentialId:  users.credentialId,
+      role:          users.role,
     }).from(users).where(eq(users.id, ctxUser.id)).limit(1);
-
-    const [embeddedWallet] = await db.select({ address: linkedWallets.address })
-      .from(linkedWallets)
-      .where(eq(linkedWallets.userId, ctxUser.id))
-      .limit(1);
 
     if (!full) return null;
 
-    const isAdmin = !!full.email && ADMIN_EMAILS.has(full.email.toLowerCase().trim());
+    // 🔒 WALLET LOCK — heal missing wallet on every me() call
+    let walletAddress: string | null = null;
+    if (full.credentialId) {
+      walletAddress = await ensureEmbeddedWallet(db, full.id, full.credentialId);
+    } else {
+      // Fallback: just read existing wallet
+      const [w] = await db.select({ address: linkedWallets.address })
+        .from(linkedWallets).where(eq(linkedWallets.userId, full.id)).limit(1);
+      walletAddress = w?.address ?? null;
+    }
+
+    const isAdmin = full.role === "admin" || (!!full.email && ADMIN_EMAILS.has(full.email.toLowerCase().trim()));
 
     return {
       id:            full.id,
@@ -151,131 +220,64 @@ export const authRouter = router({
       emailVerified: full.emailVerified,
       kycStatus:     full.kycStatus,
       isAdmin,
-      walletAddress: embeddedWallet?.address ?? null,
+      walletAddress,
     };
   }),
 
   logout: publicProcedure.mutation(() => ({ success: true })),
 
-  // ── Send / RESEND verification code ─────────────────────────
-  // Uses raw SQL to avoid drizzle column name mismatch bug on some Neon configs
+  // ── Send / resend email verification code ──────────────────────
   sendVerificationCode: protectedProcedure
-    .input(z.object({ email: z.string().email("Invalid email address") }))
+    .input(z.object({ email: z.string().email() }))
     .mutation(async ({ input, ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const userId = ctx.user!.id;
-      const code = generateCode();
-      const expiresAt = new Date(Date.now() + CODE_TTL_MS);
-      const normalEmail = input.email.toLowerCase().trim();
-
-      // Use raw SQL to sidestep any drizzle column mapping issues
-      await db.execute(
-        sql`UPDATE users SET email = ${normalEmail}, email_verified = false,
-            verification_code = ${code}, code_expires_at = ${expiresAt},
-            updated_at = NOW()
-            WHERE id = ${userId}`
-      );
-
-      try {
-        await sendResendEmail(normalEmail, code);
-      } catch (e: any) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Failed to send email: ${e.message}` });
+      // Check if email is already taken by another user
+      const [taken] = await db.select({ id: users.id })
+        .from(users).where(eq(users.email, input.email.toLowerCase())).limit(1);
+      if (taken && taken.id !== ctx.user.id) {
+        throw new TRPCError({ code: "CONFLICT", message: "Email already in use by another account" });
       }
 
-      return { sent: true, expiresAt };
-    }),
-
-  // ── Re-send code (user already has email on file, just regenerate) ───
-  resendVerificationCode: protectedProcedure
-    .mutation(async ({ ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
-
-      const userId = ctx.user!.id;
-      const [user] = await db.select({ email: users.email, emailVerified: users.emailVerified })
-        .from(users).where(eq(users.id, userId)).limit(1);
-
-      if (!user?.email) throw new TRPCError({ code: "BAD_REQUEST", message: "No email on file — add your email first" });
-      if (user.emailVerified) return { sent: false, reason: "already_verified" };
-
-      const code = generateCode();
+      const code      = generateCode();
       const expiresAt = new Date(Date.now() + CODE_TTL_MS);
 
-      await db.execute(
-        sql`UPDATE users SET verification_code = ${code}, code_expires_at = ${expiresAt},
-            updated_at = NOW() WHERE id = ${userId}`
-      );
+      await db.update(users).set({
+        email:              input.email.toLowerCase(),
+        verificationCode:   code,
+        codeExpiresAt:      expiresAt,
+        emailVerified:      false,
+      }).where(eq(users.id, ctx.user.id));
 
-      try {
-        await sendResendEmail(user.email, code);
-      } catch (e: any) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Failed to send email: ${e.message}` });
-      }
-
-      return { sent: true, expiresAt };
+      await sendResendEmail(input.email, code);
+      return { sent: true };
     }),
 
-  verifyEmail: protectedProcedure
-    .input(z.object({ code: z.string().length(6, "Code must be 6 digits") }))
+  // ── Verify code ─────────────────────────────────────────────────
+  verifyCode: protectedProcedure
+    .input(z.object({ code: z.string().length(6) }))
     .mutation(async ({ input, ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const userId = ctx.user!.id;
-      const [user] = await db.select({
+      const [u] = await db.select({
         verificationCode: users.verificationCode,
         codeExpiresAt:    users.codeExpiresAt,
-        emailVerified:    users.emailVerified,
-      }).from(users).where(eq(users.id, userId)).limit(1);
+      }).from(users).where(eq(users.id, ctx.user.id)).limit(1);
 
-      if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
-      if (user.emailVerified) return { verified: true, alreadyVerified: true };
-      if (!user.verificationCode) throw new TRPCError({ code: "BAD_REQUEST", message: "No code sent — request a new code first" });
-      if (user.codeExpiresAt && new Date() > user.codeExpiresAt) throw new TRPCError({ code: "BAD_REQUEST", message: "Code expired — request a new one" });
-      if (user.verificationCode !== input.code.trim()) throw new TRPCError({ code: "BAD_REQUEST", message: "Incorrect code — try again" });
+      if (!u?.verificationCode) throw new TRPCError({ code: "BAD_REQUEST", message: "No verification code found" });
+      if (u.codeExpiresAt && u.codeExpiresAt < new Date()) throw new TRPCError({ code: "BAD_REQUEST", message: "Code expired — request a new one" });
+      if (u.verificationCode !== input.code) throw new TRPCError({ code: "BAD_REQUEST", message: "Incorrect code" });
 
-      await db.execute(
-        sql`UPDATE users SET email_verified = true, verification_code = NULL,
-            code_expires_at = NULL, updated_at = NOW() WHERE id = ${userId}`
-      );
+      await db.update(users).set({
+        emailVerified:    true,
+        verificationCode: null,
+        codeExpiresAt:    null,
+      }).where(eq(users.id, ctx.user.id));
 
-      return { verified: true, alreadyVerified: false };
-    }),
-
-  // ── KYC: submit identity for verification ─────────────────────
-  submitKyc: protectedProcedure
-    .input(z.object({
-      fullName:    z.string().min(2),
-      idType:      z.enum(["NIN", "BVN", "PASSPORT", "DRIVERS_LICENSE"]),
-      idNumber:    z.string().min(6),
-      dateOfBirth: z.string(), // YYYY-MM-DD
-      country:     z.string().length(2),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
-
-      const userId = ctx.user!.id;
-
-      // Check current status — cannot re-submit if VERIFIED
-      const [user] = await db.select({ kycStatus: users.kycStatus })
-        .from(users).where(eq(users.id, userId)).limit(1);
-
-      if (user?.kycStatus === "VERIFIED") {
-        return { status: "VERIFIED", message: "Already verified" };
-      }
-
-      // Set to PENDING (in a real system this would queue for manual review or a KYC API)
-      await db.execute(
-        sql`UPDATE users SET kyc_status = 'PENDING', updated_at = NOW() WHERE id = ${userId}`
-      );
-
-      // Log the submission (we store details in audit log, not on user record for privacy)
-      console.log(`[KYC] User ${userId} submitted KYC: ${input.idType} / ${input.country}`);
-
-      return { status: "PENDING", message: "KYC submitted — under review (1-2 business days)" };
+      return { verified: true };
     }),
 });
-
