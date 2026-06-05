@@ -1,8 +1,9 @@
 /**
  * TopHeader.tsx — Top navigation bar with live unread badge
+ * Uses notify.unreadCount (lightweight) instead of fetching full list
  */
 import { Bell, Menu } from "lucide-react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { trpc } from "@/lib/trpc";
 import { getToken } from "@/lib/trpc";
 
@@ -12,12 +13,13 @@ export default function TopHeader({ title, onMenuToggle }: Props) {
   const navigate = useNavigate();
   const hasToken = !!getToken();
 
-  // Live unread count — refetch every 30s
-  const { data } = trpc.notify.list.useQuery(
-    { limit: 50, offset: 0 },
-    { enabled: hasToken, refetchInterval: 30_000, staleTime: 20_000 }
-  );
-  const unread = ((data as any) ?? []).filter((n: any) => !n.isRead).length;
+  // Lightweight unread count — one integer, refetch every 30s
+  const { data } = trpc.notify.unreadCount.useQuery(undefined, {
+    enabled: hasToken,
+    refetchInterval: 30_000,
+    staleTime: 20_000,
+  });
+  const unread = (data as any)?.count ?? 0;
 
   return (
     <header className="flex items-center justify-between px-4 sm:px-6 h-14 border-b border-border bg-background flex-shrink-0">
