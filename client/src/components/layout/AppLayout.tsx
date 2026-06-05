@@ -27,50 +27,41 @@ const pageTitles: Record<string, string> = {
   '/notifications': 'Notifications',
 }
 
-function getInitialDark(): boolean {
-  const stored = localStorage.getItem("aegis_theme");
-  if (stored === "dark") return true;
-  if (stored === "light") return false;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches;
-}
-
 export default function AppLayout() {
   const { user } = useCurrentUser();
-  const location = useLocation()
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [mobileMenuOpen, setMobileMenuOpen]     = useState(false)
-  const [darkMode, setDarkMode]                 = useState(getInitialDark)
+  const location  = useLocation();
+  const { currentTheme, setTheme } = usePreferences();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen]     = useState(false);
 
-  const pageTitle = pageTitles[location.pathname] ?? 'AEGIS'
+  const darkMode   = currentTheme === 'dark';
+  const pageTitle  = pageTitles[location.pathname] ?? 'AEGIS';
 
-  function toggleDark() {
-    const next = !darkMode;
-    setDarkMode(next);
-    localStorage.setItem("aegis_theme", next ? "dark" : "light");
-    document.documentElement.classList.toggle("dark", next);
-  }
+  function toggleDark() { setTheme(darkMode ? 'light' : 'dark'); }
 
+  // Apply theme class whenever it changes
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", darkMode);
+    document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
+  // Handle system preference changes when user has no override
   useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = (e: MediaQueryListEvent) => {
-      if (!localStorage.getItem("aegis_theme")) {
-        setDarkMode(e.matches);
+      if (!localStorage.getItem('aegis_theme')) {
+        document.documentElement.classList.toggle('dark', e.matches);
       }
     };
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
   }, []);
 
   useEffect(() => {
     const handleResize = () => setSidebarCollapsed(window.innerWidth < 1024);
     handleResize();
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [])
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background">
@@ -113,5 +104,5 @@ export default function AppLayout() {
         <MobileNav />
       </div>
     </div>
-  )
+  );
 }
