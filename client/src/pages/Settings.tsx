@@ -5,6 +5,7 @@
  * Removed: credentialId exposure
  */
 import { useState } from "react";
+import { usePreferences } from "@/hooks/usePreferences";
 import {
   Shield, Wallet, Bell, Moon, Sun,
   BadgeCheck, KeyRound, Copy, Check,
