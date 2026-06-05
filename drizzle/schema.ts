@@ -286,6 +286,18 @@ export const portfolioSnapshots = pgTable('portfolio_snapshots', {
 });
 export type PortfolioSnapshot = typeof portfolioSnapshots.$inferSelect;
 
+// ── User Preferences (device-independent, survives upgrades) ───────────────
+export const userPreferences = pgTable('user_preferences', {
+  userId:       integer('user_id').notNull().unique().references(() => users.id),
+  theme:        varchar('theme',    { length: 16 }).default('light'),       // 'light' | 'dark'
+  country:      varchar('country',  { length: 8  }),                        // 'NG', 'GH' etc
+  currency:     varchar('currency', { length: 8  }),                        // 'NGN', 'GHS' etc
+  language:     varchar('language', { length: 16 }).default('en'),
+  notifications: boolean('notifications').default(true).notNull(),
+  updatedAt:    timestamp('updated_at').defaultNow().notNull(),
+});
+export type UserPreferences = typeof userPreferences.$inferSelect;
+
 
 // ── Referral System ───────────────────────────────────────────────────────────
 export const referralCodes = pgTable("referral_codes", {
