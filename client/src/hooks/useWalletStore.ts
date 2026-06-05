@@ -7,7 +7,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   loadWallets, addWallet, removeWallet, renameWallet,
-  fetchWalletBalances, fetchLivePrices,
+  fetchWalletBalances, fetchLivePrices, migrateWalletsToUser,
   type StoredWallet, type WalletWithBalance,
 } from "../lib/wallet-store";
 import { useNgnRate } from "./useNgnRate";
@@ -19,13 +19,21 @@ const DEFAULT_PRICES = { eth: 3500, bnb: 620, matic: 0.85 };
 export function useWalletStore() {
   const { rate: NGN_PER_USD }   = useNgnRate();
   const { user }                = useCurrentUser();
-  const [wallets, setWallets]   = useState<StoredWallet[]>(() => loadWallets());
+  const [wallets, setWallets]   = useState<StoredWallet[]>([]);  // loaded after userId known
   const [balances, setBalances] = useState<Record<string, WalletWithBalance>>({});
   const [prices, setPrices]     = useState(DEFAULT_PRICES);
   const fetchingRef             = useRef<Set<string>>(new Set());
 
   // Fetch prices once on mount
   useEffect(() => { fetchLivePrices().then(setPrices); }, []);
+
+  // Load wallets scoped to this user — migrate legacy unscoped data once
+  const userId = (user as any)?.id ?? null;
+  useEffect(() => {
+    if (!userId) return;
+    migrateWalletsToUser(userId);
+    setWallets(loadWallets(userId));
+  }, [userId]);
 
   // Build full list: embedded wallet (from DB) + manually added wallets
   const embeddedAddress = (user as any)?.walletAddress as string | null ?? null;
@@ -73,10 +81,10 @@ export function useWalletStore() {
 
   const add = useCallback((address: string, label: string): string | null => {
     if (!isValidAddress(address)) return "Invalid Ethereum address";
-    addWallet(address, label);
-    setWallets(loadWallets());
+    addWallet(address, label, 56, userId);
+    setWallets(loadWallets(userId));
     return null;
-  }, []);
+  }, [userId]);
 
   const remove = useCallback((id: string) => {
     removeWallet(id);
