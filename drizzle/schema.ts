@@ -284,3 +284,25 @@ export const portfolioSnapshots = pgTable('portfolio_snapshots', {
   updatedAt:     timestamp('updated_at').defaultNow().notNull(),
 });
 export type PortfolioSnapshot = typeof portfolioSnapshots.$inferSelect;
+
+
+// ── Referral System ───────────────────────────────────────────────────────────
+export const referralCodes = pgTable("referral_codes", {
+  id:        serial("id").primaryKey(),
+  userId:    integer("user_id").notNull().references(() => users.id).unique(),
+  code:      varchar("code", { length: 16 }).notNull().unique(),
+  usedCount: integer("used_count").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const referrals = pgTable("referrals", {
+  id:          serial("id").primaryKey(),
+  referrerId:  integer("referrer_id").notNull().references(() => users.id),
+  refereeId:   integer("referee_id").notNull().references(() => users.id).unique(), // one referral per user
+  code:        varchar("code", { length: 16 }).notNull(),
+  rewardPaid:  boolean("reward_paid").default(false).notNull(),
+  rewardPaidAt: timestamp("reward_paid_at"),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+});
+export type Referral     = typeof referrals.$inferSelect;
+export type ReferralCode = typeof referralCodes.$inferSelect;
