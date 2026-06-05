@@ -10,6 +10,9 @@
     },
     "api/db-setup.ts": {
       "maxDuration": 60
+    },
+    "api/run-migration.ts": {
+      "maxDuration": 60
     }
   },
   "crons": [
