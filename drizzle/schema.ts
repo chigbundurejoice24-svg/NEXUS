@@ -242,6 +242,26 @@ export const supportReplies = pgTable("support_replies", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+
+// ============================================================
+// WALLET REGISTRY — THE VAULT (immutable email → wallet bond)
+// Written ONCE at registration. NEVER updated. NEVER deleted.
+// Source of truth for wallet recovery after device change / bug.
+// ============================================================
+export const walletRegistry = pgTable('wallet_registry', {
+  id:             serial('id').primaryKey(),
+  email:          varchar('email',          { length: 320 }).notNull().unique(),
+  walletAddress:  varchar('wallet_address', { length: 42  }).notNull().unique(),
+  credentialHash: varchar('credential_hash',{ length: 64  }).notNull(),
+  openId:         varchar('open_id',        { length: 64  }).notNull(),
+  userId:         integer('user_id').notNull().unique(),
+  network:        varchar('network',        { length: 32  }).default('BSC').notNull(),
+  chainId:        integer('chain_id').default(56).notNull(),
+  lockedAt:       timestamp('locked_at').defaultNow().notNull(),
+  // NO foreign keys — this vault is independent of all other tables
+});
+export type WalletRegistry = typeof walletRegistry.$inferSelect;
+
 // ── Notifications (admin-broadcast + system) ──────────────────────
 // Matches actual DB columns — no action_url or sent_by_admin (not in Neon schema)
 export const notifications = pgTable("notifications", {
