@@ -60,14 +60,15 @@ export type InsertUser  = typeof users.$inferInsert;
 // LINKED WALLETS
 // ─────────────────────────────────────────────
 export const linkedWallets = pgTable("linked_wallets", {
-  id:        serial("id").primaryKey(),
-  userId:    integer("user_id").notNull(),
-  address:   varchar("address", { length: 42 }).notNull(),
-  chainId:   integer("chain_id").notNull(),
-  type:      walletTypeEnum("type").notNull(),
-  label:     varchar("label", { length: 255 }),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  id:           serial("id").primaryKey(),
+  userId:       integer("user_id").notNull(),
+  address:      varchar("address", { length: 42 }).notNull(),
+  chainId:      integer("chain_id").notNull(),
+  type:         walletTypeEnum("type").notNull(),
+  label:        varchar("label", { length: 255 }),
+  walletAnchor: varchar("wallet_anchor", { length: 64 }),  // 🔒 HMAC binding proof
+  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  updatedAt:    timestamp("updated_at").defaultNow().notNull(),
 });
 export type LinkedWallet       = typeof linkedWallets.$inferSelect;
 export type InsertLinkedWallet = typeof linkedWallets.$inferInsert;
@@ -103,7 +104,6 @@ export const businessWallets = pgTable("business_wallets", {
   label:      varchar("label", { length: 255 }),
   createdAt:  timestamp("created_at").defaultNow().notNull(),
   updatedAt:   timestamp("updated_at").defaultNow().notNull(),
-  walletAnchor: varchar("wallet_anchor", { length: 64 }),
 });
 export type BusinessWallet       = typeof businessWallets.$inferSelect;
 export type InsertBusinessWallet = typeof businessWallets.$inferInsert;
