@@ -1,12 +1,12 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, Wallet, ArrowLeftRight, Receipt, Banknote
+  LayoutDashboard, Wallet, ArrowLeftRight, Receipt, Wallet2
 } from 'lucide-react'
 
 const mobileNavItems = [
   { icon: LayoutDashboard, label: 'Home',     href: '/' },
   { icon: Wallet,          label: 'Wallets',  href: '/wallets' },
-  { icon: Banknote,        label: 'Money',    href: '/money' },
+  { icon: Wallet2,        label: 'Money',    href: '/money' },
   { icon: ArrowLeftRight,  label: 'Rates',    href: '/rates' },
   { icon: Receipt,         label: 'Activity', href: '/transactions' },
 ]
