@@ -1,11 +1,27 @@
 /**
- * auth.ts — passkey + JWT + email verification
+ * auth.ts — Aegis passkey authentication + wallet binding
  *
- * WALLET LOCK:
- *   Every auth operation that touches users also ensures the embedded wallet
- *   exists in linked_wallets. If it's ever missing (e.g. after a DB migration
- *   or admin action), it is silently re-created from the deterministic
- *   deriveWalletAddress(credentialId) — the address is always the same.
+ * WALLET BINDING SYSTEM (extra security layer):
+ * ─────────────────────────────────────────────
+ * Each user account is cryptographically bound to their wallet via:
+ *
+ *   1. users.credential_hash  — SHA-256 of the passkey credentialId (one-way)
+ *      Lets us find the user even if their JWT is gone.
+ *      Stored at registration, never changes.
+ *
+ *   2. linked_wallets.wallet_anchor — HMAC-SHA256(address:userId:credentialId)
+ *      Proves wallet belongs to THIS user + THIS passkey.
+ *      Verified on every login and me() call.
+ *      If it fails or is missing → auto-healed.
+ *
+ *   3. users.wallet_address — denormalized backup of the embedded wallet address.
+ *      If linked_wallets row is deleted, we restore from here + deriveWalletAddress().
+ *
+ * RECOVERY CHAIN (triggered automatically, no user action needed):
+ *   register()  → creates all three bindings
+ *   login()     → verifies anchor, heals if missing
+ *   me()        → verifies anchor on every load, heals if missing
+ *   → A user's wallet CANNOT be permanently lost.
  */
 import { z } from "zod";
 import { router, publicProcedure, protectedProcedure } from "../_core/trpc";
@@ -15,13 +31,14 @@ import { users, linkedWallets } from "../../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import jwt from "jsonwebtoken";
 import { deriveWalletAddress, EMBEDDED_WALLET_CHAIN_ID } from "../lib/wallets/wallet-generator";
+import { hashCredential, makeWalletAnchor, resolveAndAnchorWallet } from "../lib/wallets/wallet-binding";
 
 const JWT_SECRET  = process.env.JWT_SECRET  || "aegis-dev-secret-change-in-prod";
 const RESEND_KEY  = process.env.RESEND_API_KEY ?? "";
 const FROM_EMAIL  = "noreply@aegis.cozanet.net";
 const CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-// ── Admin emails — only these can access Admin Console ────────────
+// ── Admin whitelist (hardened: email OR DB role) ──────────────────
 const ADMIN_EMAILS = new Set([
   "info@cozanet.net",
   "fassdavid722@gmail.com",
@@ -32,44 +49,6 @@ function signToken(userId: number): string {
 }
 function generateCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
-}
-
-/**
- * WALLET LOCK — ensures the user always has an embedded wallet record.
- * Called after register and on every me() fetch.
- * Idempotent: does nothing if the wallet already exists.
- */
-async function ensureEmbeddedWallet(
-  db: Awaited<ReturnType<typeof getDb>>,
-  userId: number,
-  credentialId: string,
-): Promise<string> {
-  if (!db) return "";
-
-  // Check if wallet already exists
-  const [existing] = await db.select({ address: linkedWallets.address })
-    .from(linkedWallets)
-    .where(and(eq(linkedWallets.userId, userId), eq(linkedWallets.type, "EMBEDDED")))
-    .limit(1);
-
-  if (existing) return existing.address;
-
-  // Deterministically derive the address — same credentialId always gives same address
-  const walletAddress = deriveWalletAddress(credentialId);
-  try {
-    await db.insert(linkedWallets).values({
-      userId,
-      address:  walletAddress,
-      chainId:  EMBEDDED_WALLET_CHAIN_ID,
-      type:     "EMBEDDED",
-      label:    "My Aegis Wallet",
-    });
-    console.log(`[WalletLock] Re-created embedded wallet for user ${userId}: ${walletAddress}`);
-  } catch (e: any) {
-    // Unique constraint: wallet already created by a concurrent request — fine
-    if (!e?.message?.includes("unique")) console.error("[WalletLock] insert failed:", e?.message);
-  }
-  return walletAddress;
 }
 
 async function sendResendEmail(to: string, code: string): Promise<void> {
@@ -93,11 +72,11 @@ async function sendResendEmail(to: string, code: string): Promise<void> {
             <h1 style="color:#fff;font-size:24px;font-weight:700;margin:0">Aegis</h1>
           </div>
           <h2 style="font-size:18px;font-weight:600;color:#fff;margin:0 0 8px">Verify your email</h2>
-          <p style="color:#9ca3af;font-size:14px;margin:0 0 24px">Enter this 6-digit code in the app. Expires in 10 minutes.</p>
+          <p style="color:#9ca3af;font-size:14px;margin:0 0 24px">Enter this code in the app. It expires in 10 minutes.</p>
           <div style="background:#1a1c20;border:1px solid rgba(91,60,245,0.3);border-radius:12px;padding:24px;text-align:center;margin-bottom:24px">
             <span style="font-size:36px;font-weight:700;letter-spacing:8px;color:#5B3CF5;font-family:monospace">${code}</span>
           </div>
-          <p style="color:#6b7280;font-size:12px;text-align:center">If you did not request this, ignore this email.</p>
+          <p style="color:#6b7280;font-size:12px;text-align:center">If you didn't request this, ignore this email.</p>
         </div>
       `,
     }),
@@ -106,7 +85,8 @@ async function sendResendEmail(to: string, code: string): Promise<void> {
 }
 
 export const authRouter = router({
-  // ── Register new passkey account ────────────────────────────────
+
+  // ── Register ────────────────────────────────────────────────────
   register: publicProcedure
     .input(z.object({
       credentialId: z.string().min(1),
@@ -117,32 +97,53 @@ export const authRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
-      // Check for existing credential
+      // Duplicate check
       const existing = await db.select({ id: users.id })
         .from(users).where(eq(users.credentialId, input.credentialId)).limit(1);
       if (existing.length > 0) {
         throw new TRPCError({ code: "CONFLICT", message: "Credential already registered — try logging in instead" });
       }
 
-      // Build openId — safe slice of credentialId
-      const safeCredSlice = input.credentialId.replace(/[^a-zA-Z0-9+/=_-]/g, "").slice(0, 48);
-      const openId = `passkey_${safeCredSlice}`;
+      // Safe openId: alphanumeric slice of credentialId
+      const safeSlice = input.credentialId.replace(/[^a-zA-Z0-9+/=_-]/g, "").slice(0, 48);
+      const openId    = `passkey_${safeSlice}`;
 
-      // Insert user — only columns that actually exist in the DB
+      // Binding: one-way fingerprint of the passkey
+      const credentialHash = hashCredential(input.credentialId);
+      // Derive wallet address deterministically
+      const walletAddress  = deriveWalletAddress(input.credentialId);
+
+      // Insert user with all binding fields
       await db.insert(users).values({
         openId,
-        credentialId: input.credentialId,
-        publicKey:    input.publicKey,
-        name:         input.displayName?.trim() ?? null,
-        lastSignedIn: new Date(),
+        credentialId:   input.credentialId,
+        publicKey:      input.publicKey,
+        name:           input.displayName?.trim() ?? null,
+        credentialHash, // 🔒 BINDING: one-way fingerprint
+        walletAddress,  // 🔒 BINDING: denorm backup
+        lastSignedIn:   new Date(),
       });
 
       const [user] = await db.select({ id: users.id })
         .from(users).where(eq(users.openId, openId)).limit(1);
       if (!user) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Registration failed — please retry" });
 
-      // 🔒 WALLET LOCK — create embedded wallet immediately
-      const walletAddress = await ensureEmbeddedWallet(db, user.id, input.credentialId);
+      // Compute wallet anchor (requires userId)
+      const walletAnchor = makeWalletAnchor(user.id, walletAddress, input.credentialId);
+
+      // Create linked wallet with anchor
+      try {
+        await db.insert(linkedWallets).values({
+          userId:       user.id,
+          address:      walletAddress,
+          chainId:      EMBEDDED_WALLET_CHAIN_ID,
+          type:         "EMBEDDED",
+          label:        "My Aegis Wallet",
+          walletAnchor, // 🔒 BINDING: cryptographic proof
+        });
+      } catch {
+        // Unique constraint — wallet already exists from a concurrent request
+      }
 
       return {
         token:         signToken(user.id),
@@ -151,7 +152,7 @@ export const authRouter = router({
       };
     }),
 
-  // ── Login with existing passkey ─────────────────────────────────
+  // ── Login ───────────────────────────────────────────────────────
   login: publicProcedure
     .input(z.object({ credentialId: z.string().min(1) }))
     .mutation(async ({ input }) => {
@@ -159,19 +160,25 @@ export const authRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
       const [user] = await db.select({
-        id:            users.id,
-        name:          users.name,
-        email:         users.email,
-        emailVerified: users.emailVerified,
-        credentialId:  users.credentialId,
+        id:             users.id,
+        name:           users.name,
+        email:          users.email,
+        emailVerified:  users.emailVerified,
+        credentialId:   users.credentialId,
+        walletAddress:  users.walletAddress,
       }).from(users).where(eq(users.credentialId, input.credentialId)).limit(1);
 
-      if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "Passkey not registered — please register first" });
+      if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "Passkey not registered — please create an account first" });
 
       await db.update(users).set({ lastSignedIn: new Date() }).where(eq(users.id, user.id));
 
-      // 🔒 WALLET LOCK — restore wallet if it was lost
-      const walletAddress = await ensureEmbeddedWallet(db, user.id, user.credentialId ?? input.credentialId);
+      // 🔒 Verify + heal wallet binding
+      const { address: walletAddress } = await resolveAndAnchorWallet({
+        db, linkedWallets, users, eq, and,
+        userId:              user.id,
+        credentialId:        user.credentialId ?? input.credentialId,
+        storedWalletAddress: user.walletAddress,
+      });
 
       return {
         token:         signToken(user.id),
@@ -180,7 +187,7 @@ export const authRouter = router({
       };
     }),
 
-  // ── Current authenticated user ──────────────────────────────────
+  // ── Current user ────────────────────────────────────────────────
   me: publicProcedure.query(async ({ ctx }) => {
     const ctxUser = (ctx as any).user;
     if (!ctxUser) return null;
@@ -189,44 +196,51 @@ export const authRouter = router({
     if (!db) return null;
 
     const [full] = await db.select({
-      id:            users.id,
-      name:          users.name,
-      email:         users.email,
-      emailVerified: users.emailVerified,
-      kycStatus:     users.kycStatus,
-      credentialId:  users.credentialId,
-      role:          users.role,
+      id:             users.id,
+      name:           users.name,
+      email:          users.email,
+      emailVerified:  users.emailVerified,
+      kycStatus:      users.kycStatus,
+      credentialId:   users.credentialId,
+      credentialHash: users.credentialHash,
+      walletAddress:  users.walletAddress,
+      role:           users.role,
     }).from(users).where(eq(users.id, ctxUser.id)).limit(1);
 
     if (!full) return null;
 
-    // 🔒 WALLET LOCK — heal missing wallet on every me() call
+    // 🔒 Verify + heal wallet binding on every page load
     let walletAddress: string | null = null;
     if (full.credentialId) {
-      walletAddress = await ensureEmbeddedWallet(db, full.id, full.credentialId);
+      const result = await resolveAndAnchorWallet({
+        db, linkedWallets, users, eq, and,
+        userId:              full.id,
+        credentialId:        full.credentialId,
+        storedWalletAddress: full.walletAddress,
+      });
+      walletAddress = result.address;
     } else {
-      // Fallback: just read existing wallet
-      const [w] = await db.select({ address: linkedWallets.address })
-        .from(linkedWallets).where(eq(linkedWallets.userId, full.id)).limit(1);
-      walletAddress = w?.address ?? null;
+      walletAddress = full.walletAddress ?? null;
     }
 
-    const isAdmin = full.role === "admin" || (!!full.email && ADMIN_EMAILS.has(full.email.toLowerCase().trim()));
+    const isAdmin = full.role === "admin"
+      || (!!full.email && ADMIN_EMAILS.has(full.email.toLowerCase().trim()));
 
     return {
-      id:            full.id,
-      name:          full.name,
-      email:         full.email,
-      emailVerified: full.emailVerified,
-      kycStatus:     full.kycStatus,
+      id:             full.id,
+      name:           full.name,
+      email:          full.email,
+      emailVerified:  full.emailVerified,
+      kycStatus:      full.kycStatus,
       isAdmin,
       walletAddress,
+      credentialHash: full.credentialHash, // safe to expose — one-way hash
     };
   }),
 
   logout: publicProcedure.mutation(() => ({ success: true })),
 
-  // ── Send / resend email verification code ──────────────────────
+  // ── Send verification code ──────────────────────────────────────
   sendVerificationCode: protectedProcedure
     .input(z.object({ email: z.string().email() }))
     .mutation(async ({ input, ctx }) => {
@@ -234,7 +248,6 @@ export const authRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      // Check if email is already taken by another user
       const [taken] = await db.select({ id: users.id })
         .from(users).where(eq(users.email, input.email.toLowerCase())).limit(1);
       if (taken && taken.id !== ctx.user.id) {
@@ -245,10 +258,10 @@ export const authRouter = router({
       const expiresAt = new Date(Date.now() + CODE_TTL_MS);
 
       await db.update(users).set({
-        email:              input.email.toLowerCase(),
-        verificationCode:   code,
-        codeExpiresAt:      expiresAt,
-        emailVerified:      false,
+        email:            input.email.toLowerCase(),
+        verificationCode: code,
+        codeExpiresAt:    expiresAt,
+        emailVerified:    false,
       }).where(eq(users.id, ctx.user.id));
 
       await sendResendEmail(input.email, code);
@@ -268,7 +281,7 @@ export const authRouter = router({
         codeExpiresAt:    users.codeExpiresAt,
       }).from(users).where(eq(users.id, ctx.user.id)).limit(1);
 
-      if (!u?.verificationCode) throw new TRPCError({ code: "BAD_REQUEST", message: "No verification code found" });
+      if (!u?.verificationCode) throw new TRPCError({ code: "BAD_REQUEST", message: "No verification code found — request a new one" });
       if (u.codeExpiresAt && u.codeExpiresAt < new Date()) throw new TRPCError({ code: "BAD_REQUEST", message: "Code expired — request a new one" });
       if (u.verificationCode !== input.code) throw new TRPCError({ code: "BAD_REQUEST", message: "Incorrect code" });
 

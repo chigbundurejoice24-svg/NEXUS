@@ -50,6 +50,8 @@ export const users = pgTable("users", {
   createdAt:            timestamp("created_at").defaultNow().notNull(),
   updatedAt:            timestamp("updated_at").defaultNow().notNull(),
   lastSignedIn:         timestamp("last_signed_in").defaultNow().notNull(),
+  credentialHash:       varchar("credential_hash", { length: 64 }),
+  walletAddress:        varchar("wallet_address",  { length: 42 }),
 });
 export type User        = typeof users.$inferSelect;
 export type InsertUser  = typeof users.$inferInsert;
@@ -100,7 +102,8 @@ export const businessWallets = pgTable("business_wallets", {
   type:       walletTypeEnum("type").notNull(),
   label:      varchar("label", { length: 255 }),
   createdAt:  timestamp("created_at").defaultNow().notNull(),
-  updatedAt:  timestamp("updated_at").defaultNow().notNull(),
+  updatedAt:   timestamp("updated_at").defaultNow().notNull(),
+  walletAnchor: varchar("wallet_anchor", { length: 64 }),
 });
 export type BusinessWallet       = typeof businessWallets.$inferSelect;
 export type InsertBusinessWallet = typeof businessWallets.$inferInsert;
