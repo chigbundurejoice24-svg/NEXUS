@@ -32,11 +32,14 @@ type Step = "country" | "choice" | "register" | "legal" | "login" | "email" | "v
 // 6-digit OTP input
 function OtpInput({ onComplete }: { onComplete: (code: string) => void }) {
   const [digits, setDigits] = useState(["","","","","",""]);
-  const refs = [
-    useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null),
-    useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null),
-    useRef<HTMLInputElement>(null), useRef<HTMLInputElement>(null),
-  ];
+  // Fixed: useRef must not be called inside an array literal (Rules of Hooks)
+  const ref0 = useRef<HTMLInputElement>(null);
+  const ref1 = useRef<HTMLInputElement>(null);
+  const ref2 = useRef<HTMLInputElement>(null);
+  const ref3 = useRef<HTMLInputElement>(null);
+  const ref4 = useRef<HTMLInputElement>(null);
+  const ref5 = useRef<HTMLInputElement>(null);
+  const refs = [ref0, ref1, ref2, ref3, ref4, ref5];
 
   function handleChange(i: number, val: string) {
     const digit = val.replace(/\D/g, "").slice(-1);
