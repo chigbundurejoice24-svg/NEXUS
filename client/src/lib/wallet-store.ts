@@ -11,7 +11,13 @@
 import { createPublicClient, http, formatUnits } from "viem";
 import { mainnet, bsc, polygon, arbitrum } from "viem/chains";
 
-const STORAGE_KEY = "aegis_wallets";
+const STORAGE_KEY_PREFIX = "aegis_wallets";
+const LEGACY_KEY         = "aegis_wallets"; // unscoped — migrated on first login
+
+// Returns the per-user storage key — scoped so different users never share wallets
+function walletKey(userId?: string | number | null): string {
+  return userId ? `${STORAGE_KEY_PREFIX}_${userId}` : LEGACY_KEY;
+}
 
 export interface StoredWallet {
   id: string; address: string; label: string; chainId: number; addedAt: string;
@@ -65,20 +71,40 @@ const _balCache  = new Map<string, { data: TokenBalance[]; ts: number }>();
 const PRICE_TTL  = 5 * 60_000;
 const BAL_TTL    = 60_000; // 60 seconds
 
-// ── localStorage ───────────────────────────────────────────────────
-export function loadWallets(): StoredWallet[] {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]"); } catch { return []; }
+// ── localStorage (user-scoped) ─────────────────────────────────────
+export function loadWallets(userId?: string | number | null): StoredWallet[] {
+  try { return JSON.parse(localStorage.getItem(walletKey(userId)) ?? "[]"); } catch { return []; }
 }
-export function saveWallets(ws: StoredWallet[]) { localStorage.setItem(STORAGE_KEY, JSON.stringify(ws)); }
-export function addWallet(address: string, label: string, chainId = 56): StoredWallet {
-  const wallets = loadWallets();
+export function saveWallets(ws: StoredWallet[], userId?: string | number | null) {
+  localStorage.setItem(walletKey(userId), JSON.stringify(ws));
+}
+export function addWallet(address: string, label: string, chainId = 56, userId?: string | number | null): StoredWallet {
+  const wallets = loadWallets(userId);
   const exists = wallets.find(w => w.address.toLowerCase() === address.toLowerCase());
   if (exists) return exists;
   const w: StoredWallet = { id: crypto.randomUUID(), address: address.toLowerCase(), label: label || "My Wallet", chainId, addedAt: new Date().toISOString() };
-  wallets.push(w); saveWallets(wallets); return w;
+  wallets.push(w); saveWallets(wallets, userId); return w;
 }
-export function removeWallet(id: string) { saveWallets(loadWallets().filter(w => w.id !== id)); }
-export function renameWallet(id: string, label: string) { saveWallets(loadWallets().map(w => w.id === id ? { ...w, label } : w)); }
+export function removeWallet(id: string, userId?: string | number | null) {
+  saveWallets(loadWallets(userId).filter(w => w.id !== id), userId);
+}
+export function renameWallet(id: string, label: string, userId?: string | number | null) {
+  saveWallets(loadWallets(userId).map(w => w.id === id ? { ...w, label } : w), userId);
+}
+
+// ── Migration: move legacy unscoped wallets to user-scoped key ────
+export function migrateWalletsToUser(userId: string | number): void {
+  try {
+    const scopedKey = walletKey(userId);
+    // Only migrate if the scoped key is empty and legacy has data
+    const legacy  = JSON.parse(localStorage.getItem(LEGACY_KEY) ?? "[]") as StoredWallet[];
+    const scoped  = JSON.parse(localStorage.getItem(scopedKey)  ?? "[]") as StoredWallet[];
+    if (legacy.length > 0 && scoped.length === 0) {
+      localStorage.setItem(scopedKey, JSON.stringify(legacy));
+      localStorage.removeItem(LEGACY_KEY);
+    }
+  } catch { /* silent */ }
+}
 
 // ── Price fetch — CoinGecko + Binance fallback ────────────────────
 export async function fetchLivePrices(): Promise<{eth:number;bnb:number;matic:number}> {
