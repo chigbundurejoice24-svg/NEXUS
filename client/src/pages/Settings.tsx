@@ -53,7 +53,8 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 
 // ── Email Verification ────────────────────────────────────────────
 function EmailVerification() {
-  const { user } = useCurrentUser();
+  const { user, isLoading } = useCurrentUser();
+  if (isLoading) return <div className="px-5 py-4"><Loader2 size={18} className="animate-spin text-aegis-tertiary-dark"/></div>;
   const [email, setEmail]       = useState(user?.email ?? "");
   const [code, setCode]         = useState("");
   const [step, setStep]         = useState<"idle"|"sent"|"verified">(user?.emailVerified ? "verified" : "idle");
@@ -274,7 +275,13 @@ function KycSection() {
 
 // ── Main ──────────────────────────────────────────────────────────
 export default function Settings() {
-  const { user } = useCurrentUser();
+  const { user, isLoading: authLoading } = useCurrentUser();
+  // Wait for auth to resolve before rendering any tRPC-dependent sections
+  if (authLoading) return (
+    <div className="flex items-center justify-center h-64">
+      <Loader2 size={24} className="animate-spin text-aegis-tertiary-dark"/>
+    </div>
+  );
   const { linkedWallets } = useWallets();
   const [notifTx, setNotifTx]     = useState(true);
   const [notifPromo, setNotifPromo] = useState(false);
