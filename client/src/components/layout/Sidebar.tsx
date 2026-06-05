@@ -8,11 +8,8 @@ import { useCurrentUser } from "@/hooks/useAuth";
 const BASE_NAV = [
   { id: "dashboard",    label: "Dashboard",     icon: LayoutDashboard, href: "/" },
   { id: "wallets",      label: "Wallets",        icon: Wallet,          href: "/wallets" },
-  { id: "send",         label: "Send Money",     icon: Send,            href: "/send" },
-  { id: "receive",      label: "Receive Money",  icon: Download,        href: "/receive" },
-  { id: "fund",         label: "Fund Wallet",    icon: PlusCircle,      href: "/fund" },
+  { id: "money",        label: "Money",          icon: Banknote,        href: "/money" },
   { id: "transactions", label: "Transactions",   icon: Receipt,         href: "/transactions" },
-  { id: "exchange",     label: "Exchange",       icon: ArrowLeftRight,  href: "/exchange" },
   { id: "rates",        label: "Rates",          icon: TrendingUp,      href: "/rates" },
   { id: "ai",           label: "Aegis AI",       icon: Sparkles,        href: "/ai" },
   { id: "rewards",      label: "Rewards",        icon: Gift,            href: "/rewards" },
