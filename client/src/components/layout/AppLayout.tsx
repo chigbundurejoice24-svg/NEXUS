@@ -1,4 +1,5 @@
 import { useCurrentUser } from '@/hooks/useAuth';
+import { usePreferences } from '@/hooks/usePreferences';
 import { Outlet, useLocation } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import Sidebar from './Sidebar'
