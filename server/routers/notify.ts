@@ -1,18 +1,43 @@
 /**
  * notify.ts — Notifications tRPC router
- * Uses columns that actually exist in the DB:
- *   id, user_id, title, body, type (varchar), is_read, created_at
- * Does NOT reference: action_url, sent_by_admin (add those via migration first)
+ *
+ * sendToUser now accepts EITHER:
+ *   - userId (numeric DB id) — for internal lookups
+ *   - aegisId (AEG-XXXXXXXX string) — human-friendly, permanent
+ *
+ * Schema: id, user_id, title, body, type, is_read, created_at
  */
 import { z } from "zod";
-import { router, protectedProcedure, adminProcedure } from "../_core/trpc";
+import { router, protectedProcedure, adminProcedure, publicProcedure } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
-import { notifications } from "../../drizzle/schema";
+import { notifications, users } from "../../drizzle/schema";
 import { eq, desc, or, isNull, and, count, sql } from "drizzle-orm";
 
+// ── resolve: userId number | aegisId string → DB user id ─────────────────────
+async function resolveRecipient(input: { userId?: number; aegisId?: string }): Promise<number> {
+  if (!input.userId && !input.aegisId) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "Provide userId or aegisId" });
+  }
+  if (input.userId) return input.userId;
+
+  // look up by aegisId
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+
+  const [row] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.aegisId, input.aegisId!.toUpperCase().trim()))
+    .limit(1);
+
+  if (!row) throw new TRPCError({ code: "NOT_FOUND", message: `No user found with Aegis ID ${input.aegisId}` });
+  return row.id;
+}
+
 export const notifyRouter = router({
-  // ── Get my notifications (personal + broadcasts) ──────────────
+
+  // ── My notifications (personal + broadcasts) ──────────────────────────────
   list: protectedProcedure
     .input(z.object({ limit: z.number().int().min(1).max(100).default(30) }))
     .query(async ({ input, ctx }) => {
@@ -33,106 +58,102 @@ export const notifyRouter = router({
           .where(or(eq(notifications.userId, ctx.user.id), isNull(notifications.userId)))
           .orderBy(desc(notifications.createdAt))
           .limit(input.limit);
-      } catch (e) {
-        console.error("[notify.list]", e);
-        return [];
-      }
+      } catch { return []; }
     }),
 
-  // ── Unread badge count ─────────────────────────────────────────
+  // ── Unread count ──────────────────────────────────────────────────────────
   unreadCount: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) return { count: 0 };
-    try {
-      const [row] = await db
-        .select({ c: count() })
-        .from(notifications)
-        .where(
-          and(
-            or(eq(notifications.userId, ctx.user.id), isNull(notifications.userId)),
-            eq(notifications.isRead, false)
-          )
-        );
-      return { count: Number(row?.c ?? 0) };
-    } catch { return { count: 0 }; }
+    const [row] = await db
+      .select({ count: count() })
+      .from(notifications)
+      .where(and(
+        or(eq(notifications.userId, ctx.user.id), isNull(notifications.userId)),
+        eq(notifications.isRead, false)
+      ));
+    return { count: row?.count ?? 0 };
   }),
 
-  // ── Mark specific notifications read ──────────────────────────
+  // ── Mark read ─────────────────────────────────────────────────────────────
   markRead: protectedProcedure
-    .input(z.object({ ids: z.array(z.number().int()) }))
+    .input(z.object({ id: z.number().int() }))
     .mutation(async ({ input, ctx }) => {
       const db = await getDb();
-      if (!db) return { success: false };
-      try {
-        for (const id of input.ids) {
-          await db
-            .update(notifications)
-            .set({ isRead: true })
-            .where(
-              and(
-                eq(notifications.id, id),
-                or(eq(notifications.userId, ctx.user.id), isNull(notifications.userId))
-              )
-            );
-        }
-        return { success: true };
-      } catch { return { success: false }; }
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      await db.execute(
+        sql`UPDATE notifications SET is_read = true WHERE id = ${input.id}
+            AND (user_id = ${ctx.user.id} OR user_id IS NULL)`
+      );
+      return { success: true };
     }),
 
-  // ── Mark ALL notifications read ────────────────────────────────
+  // ── Mark all read ─────────────────────────────────────────────────────────
   markAllRead: protectedProcedure.mutation(async ({ ctx }) => {
     const db = await getDb();
-    if (!db) return { success: false };
-    try {
-      await db
-        .update(notifications)
-        .set({ isRead: true })
-        .where(or(eq(notifications.userId, ctx.user.id), isNull(notifications.userId)));
-      return { success: true };
-    } catch { return { success: false }; }
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+    await db.execute(
+      sql`UPDATE notifications SET is_read = true
+          WHERE (user_id = ${ctx.user.id} OR user_id IS NULL) AND is_read = false`
+    );
+    return { success: true };
   }),
 
-  // ── Admin: broadcast to ALL users (userId = NULL) ─────────────
+  // ── ADMIN: Broadcast to all users ─────────────────────────────────────────
   broadcast: adminProcedure
     .input(z.object({
       title: z.string().min(3).max(255),
       body:  z.string().min(5),
-      type:  z.enum(["SYSTEM", "BROADCAST", "PROMO"]).default("BROADCAST"),
+      type:  z.enum(["SYSTEM", "BROADCAST", "TRANSACTION", "SUPPORT", "PROMO"]).default("BROADCAST"),
     }))
     .mutation(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      try {
-        // Use raw SQL to avoid ORM column mapping issues
-        await db.execute(
-          sql`INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
-              VALUES (NULL, ${input.title}, ${input.body}, ${input.type}, false, NOW())`
-        );
-        return { success: true };
-      } catch (e: any) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message });
-      }
+      await db.execute(
+        sql`INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
+            VALUES (NULL, ${input.title}, ${input.body}, ${input.type}, false, NOW())`
+      );
+      return { success: true };
     }),
 
-  // ── Admin: send to a specific user ────────────────────────────
+  // ── ADMIN: Send to specific user — accepts userId OR aegisId ─────────────
   sendToUser: adminProcedure
     .input(z.object({
-      userId: z.number().int().positive(),
-      title:  z.string().min(3).max(255),
-      body:   z.string().min(5),
-      type:   z.enum(["SYSTEM", "BROADCAST", "TRANSACTION", "SUPPORT", "PROMO"]).default("SYSTEM"),
+      userId:  z.number().int().positive().optional(),
+      aegisId: z.string().regex(/^AEG-[A-Z0-9]{8}$/, "Format: AEG-XXXXXXXX").optional(),
+      title:   z.string().min(3).max(255),
+      body:    z.string().min(5),
+      type:    z.enum(["SYSTEM", "BROADCAST", "TRANSACTION", "SUPPORT", "PROMO"]).default("SYSTEM"),
     }))
     .mutation(async ({ input }) => {
+      const targetId = await resolveRecipient({ userId: input.userId, aegisId: input.aegisId });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-      try {
-        await db.execute(
-          sql`INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
-              VALUES (${input.userId}, ${input.title}, ${input.body}, ${input.type}, false, NOW())`
-        );
-        return { success: true };
-      } catch (e: any) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: e?.message });
-      }
+      await db.execute(
+        sql`INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
+            VALUES (${targetId}, ${input.title}, ${input.body}, ${input.type}, false, NOW())`
+      );
+      return { success: true, deliveredTo: targetId };
+    }),
+
+  // ── ADMIN: Look up user by aegisId before sending ─────────────────────────
+  lookupByAegisId: adminProcedure
+    .input(z.object({ aegisId: z.string().min(4) }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [row] = await db
+        .select({
+          id:        users.id,
+          name:      users.name,
+          email:     users.email,
+          aegisId:   users.aegisId,
+          kycStatus: users.kycStatus,
+        })
+        .from(users)
+        .where(eq(users.aegisId, input.aegisId.toUpperCase().trim()))
+        .limit(1);
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "No user with that Aegis ID" });
+      return row;
     }),
 });
