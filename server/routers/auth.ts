@@ -95,6 +95,14 @@ export const authRouter = router({
       const credentialHash = hashCredential(input.credentialId);
       const walletAddress  = deriveWalletAddress(input.credentialId);
 
+      // Generate permanent Aegis ID — collision-safe, never changes
+      let aegisId = generateAegisId();
+      for (let i = 0; i < 10; i++) {
+        const conflict = await db.select({ id: users.id }).from(users).where(eq(users.aegisId, aegisId)).limit(1);
+        if (!conflict.length) break;
+        aegisId = generateAegisId();
+      }
+
       await db.insert(users).values({
         openId,
         credentialId:    input.credentialId,
@@ -103,6 +111,7 @@ export const authRouter = router({
         credentialHash,
         walletAddress,
         lastSignedIn:    new Date(),
+        aegisId,
       });
 
       const [user] = await db.select({ id: users.id })
