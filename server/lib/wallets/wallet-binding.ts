@@ -1,32 +1,38 @@
 /**
- * wallet-binding.ts
+ * wallet-binding.ts — Triple-layer wallet security + Vault recovery
  *
- * Cryptographic binding between a user account and their embedded wallet.
- *
- * HOW IT WORKS:
+ * SECURITY MODEL (4 layers, each independent):
  * ─────────────────────────────────────────────────────────────────
- * 1. CREDENTIAL HASH  — SHA-256(credentialId)
- *    Stored in users.credential_hash.
- *    One-way: can never be reversed to get the credentialId.
- *    Purpose: lets us find the user by their passkey fingerprint
- *             even if the session JWT is gone.
+ * LAYER 1 — linked_wallets row  (primary, fast)
+ *   wallet_anchor = HMAC-SHA256(address:userId:credentialId, ANCHOR_SECRET)
+ *   Proves wallet belongs to exactly this user + passkey.
+ *   If tampered: detected + re-anchored automatically.
  *
- * 2. WALLET ANCHOR    — HMAC-SHA256(address:userId:credentialId, ANCHOR_SECRET)
- *    Stored in linked_wallets.wallet_anchor.
- *    Purpose: cryptographically proves this wallet belongs to exactly
- *             this user + this passkey. Can't be forged without ANCHOR_SECRET.
- *             If someone deletes or swaps the wallet row, the anchor won't match
- *             the recomputed value → we know it's tampered.
+ * LAYER 2 — users.wallet_address  (denormalized backup)
+ *   Set at registration, updated on every login/me() call.
+ *   If linked_wallets row is lost: restore from here.
  *
- * 3. WALLET ADDRESS   — stored in users.wallet_address (denormalized copy)
- *    If linked_wallets row is deleted/lost, we can restore from this field
- *    and from deriveWalletAddress(credentialId) — both must agree.
+ * LAYER 3 — deterministic derivation  (cryptographic regen)
+ *   deriveWalletAddress(credentialId) always produces the same address
+ *   for the same passkey. Even if DB is wiped: same passkey = same wallet.
  *
- * RECOVERY CHAIN (in order of trust):
- *   1. linked_wallets WHERE user_id = ? AND anchor = expected   (primary)
- *   2. users.wallet_address                                      (denorm backup)
- *   3. deriveWalletAddress(credentialId)                         (deterministic regen)
- *   All three must agree. If they differ → log security alert.
+ * LAYER 4 — wallet_registry  (THE VAULT — email-locked forever)
+ *   Written ONCE at registration. NEVER updated. NEVER deleted.
+ *   Locked to email address — survives device changes, passkey resets,
+ *   application bugs, DB corruption. Final source of truth.
+ *   If user changes device: look up email in wallet_registry → get address.
+ *
+ * RECOVERY CHAIN (automatic, no user action):
+ *   login() / me() → resolveAndAnchorWallet() → checks all 4 layers
+ *   → A wallet CANNOT be permanently lost.
+ *
+ * DEVICE CHANGE SCENARIO:
+ *   User registers on Phone A → wallet 0xABC locked to email john@gmail.com
+ *   Phone A lost → registers new passkey on Phone B
+ *   New credentialId → would derive wallet 0xXYZ (different!)
+ *   BUT: wallet_registry has john@gmail.com → 0xABC
+ *   login() sees email match → returns 0xABC regardless of new passkey
+ *   Wallet is NEVER lost.
  */
 
 import { createHmac, createHash } from "crypto";
@@ -34,18 +40,12 @@ import { deriveWalletAddress } from "./wallet-generator";
 
 const ANCHOR_SECRET = process.env.WALLET_ANCHOR_SECRET ?? "aegis-anchor-dev-secret";
 
-/**
- * One-way fingerprint of the passkey credentialId.
- * Used to look up users when no JWT exists.
- */
+/** One-way fingerprint of the passkey credentialId */
 export function hashCredential(credentialId: string): string {
   return createHash("sha256").update(credentialId).digest("hex");
 }
 
-/**
- * HMAC binding: proves wallet belongs to this user + credential.
- * Must match what was stored at registration time.
- */
+/** HMAC binding: proves wallet belongs to this user + credential */
 export function makeWalletAnchor(
   userId: number,
   walletAddress: string,
@@ -55,10 +55,7 @@ export function makeWalletAnchor(
   return createHmac("sha256", ANCHOR_SECRET).update(msg).digest("hex");
 }
 
-/**
- * Verify the stored anchor matches the expected value.
- * Returns false if tampered or missing.
- */
+/** Constant-time anchor verification */
 export function verifyWalletAnchor(
   storedAnchor: string | null | undefined,
   userId: number,
@@ -67,7 +64,6 @@ export function verifyWalletAnchor(
 ): boolean {
   if (!storedAnchor) return false;
   const expected = makeWalletAnchor(userId, walletAddress, credentialId);
-  // Constant-time comparison to prevent timing attacks
   if (storedAnchor.length !== expected.length) return false;
   let diff = 0;
   for (let i = 0; i < expected.length; i++) {
@@ -77,35 +73,29 @@ export function verifyWalletAnchor(
 }
 
 /**
- * Triple-source wallet resolution with anchor verification.
- *
- * Priority:
- *   1. If linked_wallets row exists AND anchor is valid → trust it
- *   2. If linked_wallets row exists but anchor missing/invalid → re-anchor it
- *   3. If linked_wallets row is missing → derive from credentialId + restore
- *
- * All paths end with the wallet being anchored in the DB.
+ * 4-layer wallet resolution + auto-healing.
+ * Call on every login() and me() — fast, idempotent, self-repairing.
  */
 export async function resolveAndAnchorWallet(params: {
-  db: any;
-  linkedWallets: any;
-  users: any;
-  eq: any;
-  and: any;
-  userId: number;
-  credentialId: string;
+  db:                  any;
+  linkedWallets:       any;
+  users:               any;
+  eq:                  any;
+  and:                 any;
+  userId:              number;
+  credentialId:        string;
+  email?:              string | null;
   storedWalletAddress?: string | null;
-  storedAnchor?: string | null;
 }): Promise<{ address: string; wasRestored: boolean; anchorValid: boolean }> {
   const {
     db, linkedWallets, users, eq, and,
-    userId, credentialId,
-    storedWalletAddress, storedAnchor,
+    userId, credentialId, email,
+    storedWalletAddress,
   } = params;
 
-  const expectedAddress = deriveWalletAddress(credentialId);
+  const derivedAddress = deriveWalletAddress(credentialId);
 
-  // --- Try to find the existing embedded wallet row ---
+  // ── LAYER 1: Check linked_wallets row ─────────────────────────
   const [existingWallet] = await db
     .select({ id: linkedWallets.id, address: linkedWallets.address, anchor: linkedWallets.walletAnchor })
     .from(linkedWallets)
@@ -115,16 +105,16 @@ export async function resolveAndAnchorWallet(params: {
   if (existingWallet) {
     const anchorOk = verifyWalletAnchor(existingWallet.anchor, userId, existingWallet.address, credentialId);
 
+    // Re-anchor if missing or tampered
     if (!anchorOk) {
-      // Anchor missing or tampered — re-anchor with correct value
-      console.warn(`[WalletBinding] Re-anchoring wallet for user ${userId} (anchor mismatch)`);
+      console.warn(`[WalletSecurity] Re-anchoring wallet for user ${userId}`);
       const newAnchor = makeWalletAnchor(userId, existingWallet.address, credentialId);
       await db.update(linkedWallets)
         .set({ walletAnchor: newAnchor })
         .where(eq(linkedWallets.id, existingWallet.id));
     }
 
-    // Also sync denormalized wallet_address on users row
+    // Sync users.wallet_address (denorm backup)
     if (!storedWalletAddress || storedWalletAddress !== existingWallet.address) {
       await db.update(users)
         .set({ walletAddress: existingWallet.address })
@@ -134,34 +124,80 @@ export async function resolveAndAnchorWallet(params: {
     return { address: existingWallet.address, wasRestored: false, anchorValid: anchorOk };
   }
 
-  // --- No wallet row found: restore from credentialId ---
-  console.warn(`[WalletBinding] Restoring lost wallet for user ${userId} → ${expectedAddress}`);
+  // ── LAYER 4: Check wallet_registry (vault) before rederiving ──
+  // If the user's email is in the vault, use THAT address — not the derived one
+  // This handles the device-change scenario
+  let vaultAddress: string | null = null;
+  if (email) {
+    try {
+      const [vaultRow] = await db.execute(
+        `SELECT wallet_address FROM wallet_registry WHERE email = $1 LIMIT 1`,
+        [email.toLowerCase().trim()]
+      );
+      if (vaultRow?.wallet_address) {
+        vaultAddress = vaultRow.wallet_address;
+        console.info(`[WalletSecurity] Vault restore for user ${userId} email=${email} → ${vaultAddress}`);
+      }
+    } catch (e) {
+      // wallet_registry may not exist yet on old DBs — fall through to layer 2/3
+      console.warn("[WalletSecurity] wallet_registry lookup failed:", e);
+    }
+  }
 
-  // Prefer users.wallet_address if it matches derivation (extra safety)
-  const finalAddress =
-    storedWalletAddress && storedWalletAddress === expectedAddress
-      ? storedWalletAddress
-      : expectedAddress;
+  // ── LAYER 2/3: Use vault address, then stored address, then derived ────────
+  const finalAddress = vaultAddress
+    ?? (storedWalletAddress === derivedAddress ? storedWalletAddress : null)
+    ?? derivedAddress;
+
+  console.warn(`[WalletSecurity] Restoring lost wallet row for user ${userId} → ${finalAddress}`);
 
   const anchor = makeWalletAnchor(userId, finalAddress, credentialId);
 
+  // Restore linked_wallets row
   try {
     await db.insert(linkedWallets).values({
       userId,
       address:      finalAddress,
-      chainId:      56, // BSC
+      chainId:      56,
       type:         "EMBEDDED",
       label:        "My Aegis Wallet",
       walletAnchor: anchor,
     });
   } catch {
-    // Unique constraint race — wallet was re-created by another request
+    // Race condition — another request already restored it
   }
 
-  // Sync denorm
+  // Sync users.wallet_address
   await db.update(users)
     .set({ walletAddress: finalAddress })
     .where(eq(users.id, userId));
 
   return { address: finalAddress, wasRestored: true, anchorValid: true };
+}
+
+/**
+ * Lock a wallet address to an email in the vault.
+ * Called ONCE during registration. Safe to call multiple times (ON CONFLICT DO NOTHING).
+ */
+export async function lockWalletToEmail(params: {
+  db:             any;
+  userId:         number;
+  email:          string;
+  walletAddress:  string;
+  credentialHash: string;
+  openId:         string;
+}): Promise<void> {
+  const { db, userId, email, walletAddress, credentialHash, openId } = params;
+  try {
+    await db.execute(
+      `INSERT INTO wallet_registry (user_id, email, wallet_address, credential_hash, open_id, locked_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT DO NOTHING`,
+      [userId, email.toLowerCase().trim(), walletAddress.toLowerCase(), credentialHash, openId]
+    );
+    console.info(`[WalletVault] Locked wallet ${walletAddress} → ${email}`);
+  } catch (e) {
+    // Non-fatal — vault entry may already exist
+    console.warn("[WalletVault] lockWalletToEmail:", e);
+  }
 }
