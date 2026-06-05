@@ -28,7 +28,7 @@
     },
     {
       "path": "/api/cron/confirmations",
-      "schedule": "0 * * * *"
+      "schedule": "0 0 * * *"
     }
   ],
   "rewrites": [
