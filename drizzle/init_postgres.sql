@@ -1,47 +1,29 @@
 -- =============================================================
 -- Aegis — Full PostgreSQL schema init migration
--- Generated: 2026-06-04 (replaces old MySQL migrations)
+-- Updated: 2026-06-05 — adds wallet security + registry
 -- Run once on your Neon database. Safe to re-run (IF NOT EXISTS).
 -- =============================================================
 
 -- ENUMS
-DO $$ BEGIN
-  CREATE TYPE role AS ENUM ('user', 'admin');
+DO $$ BEGIN CREATE TYPE role AS ENUM ('user', 'admin');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE TYPE kyc_status AS ENUM ('NONE','PENDING','VERIFIED','REJECTED');
+DO $$ BEGIN CREATE TYPE kyc_status AS ENUM ('NONE','PENDING','VERIFIED','REJECTED');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE TYPE wallet_type AS ENUM ('EMBEDDED','EXTERNAL');
+DO $$ BEGIN CREATE TYPE wallet_type AS ENUM ('EMBEDDED','EXTERNAL');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE TYPE biz_member_role AS ENUM ('ADMIN','TREASURER','VIEWER');
+DO $$ BEGIN CREATE TYPE biz_member_role AS ENUM ('ADMIN','TREASURER','VIEWER');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE TYPE tx_state AS ENUM (
-    'CREATED','QUOTED','SIMULATED','PENDING_SIGNATURE',
-    'SUBMITTED','CONFIRMED','SETTLED','FAILED','REVERSED'
-  );
+DO $$ BEGIN CREATE TYPE tx_state AS ENUM (
+  'CREATED','QUOTED','SIMULATED','PENDING_SIGNATURE',
+  'SUBMITTED','CONFIRMED','SETTLED','FAILED','REVERSED');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE TYPE ledger_type AS ENUM ('ASSET','LIABILITY','EQUITY','REVENUE','EXPENSE');
+DO $$ BEGIN CREATE TYPE ledger_type AS ENUM ('ASSET','LIABILITY','EQUITY','REVENUE','EXPENSE');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE TYPE journal_status AS ENUM ('PENDING','POSTED','REVERSED');
+DO $$ BEGIN CREATE TYPE journal_status AS ENUM ('PENDING','POSTED','REVERSED');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE TYPE ticket_status AS ENUM ('OPEN','IN_PROGRESS','RESOLVED','CLOSED');
+DO $$ BEGIN CREATE TYPE ticket_status AS ENUM ('OPEN','IN_PROGRESS','RESOLVED','CLOSED');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-
-DO $$ BEGIN
-  CREATE TYPE ticket_priority AS ENUM ('LOW','MEDIUM','HIGH','CRITICAL');
+DO $$ BEGIN CREATE TYPE ticket_priority AS ENUM ('LOW','MEDIUM','HIGH','CRITICAL');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- USERS
@@ -65,22 +47,52 @@ CREATE TABLE IF NOT EXISTS users (
   suspended              BOOLEAN NOT NULL DEFAULT false,
   created_at             TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at             TIMESTAMP NOT NULL DEFAULT NOW(),
-  last_signed_in         TIMESTAMP NOT NULL DEFAULT NOW()
+  last_signed_in         TIMESTAMP NOT NULL DEFAULT NOW(),
+  -- 🔒 WALLET SECURITY COLUMNS (required for binding + recovery)
+  credential_hash        VARCHAR(64),   -- SHA-256 of credentialId (one-way, never changes)
+  wallet_address         VARCHAR(42)    -- denormalized copy of embedded wallet address
 );
 
 -- LINKED WALLETS
+-- NOTE: ON DELETE RESTRICT — wallets must NEVER be auto-deleted
 CREATE TABLE IF NOT EXISTS linked_wallets (
-  id         SERIAL PRIMARY KEY,
-  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  address    VARCHAR(42) NOT NULL,
-  chain_id   INTEGER NOT NULL,
-  type       wallet_type NOT NULL,
-  label      VARCHAR(255),
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  id            SERIAL PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  address       VARCHAR(42) NOT NULL,
+  chain_id      INTEGER NOT NULL,
+  type          wallet_type NOT NULL,
+  label         VARCHAR(255),
+  wallet_anchor VARCHAR(64),  -- 🔒 HMAC-SHA256 cryptographic binding proof
+  created_at    TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE (user_id, address, chain_id)
 );
 CREATE INDEX IF NOT EXISTS idx_lw_user ON linked_wallets(user_id);
+
+-- ============================================================
+-- WALLET REGISTRY — THE VAULT
+-- Immutable email → wallet bond. Written ONCE at registration.
+-- NEVER updated. NEVER deleted. Survives ALL application bugs.
+-- This is the final source of truth for "what is this email's wallet"
+-- ============================================================
+CREATE TABLE IF NOT EXISTS wallet_registry (
+  id              SERIAL PRIMARY KEY,
+  email           VARCHAR(320) NOT NULL,
+  wallet_address  VARCHAR(42)  NOT NULL,
+  credential_hash VARCHAR(64)  NOT NULL,
+  open_id         VARCHAR(64)  NOT NULL,
+  user_id         INTEGER      NOT NULL,
+  network         VARCHAR(32)  NOT NULL DEFAULT 'BSC',
+  chain_id        INTEGER      NOT NULL DEFAULT 56,
+  locked_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
+  UNIQUE (email),
+  UNIQUE (wallet_address),
+  UNIQUE (user_id)
+);
+-- NO foreign keys on purpose — this table is an independent vault
+CREATE INDEX IF NOT EXISTS idx_wr_email   ON wallet_registry(email);
+CREATE INDEX IF NOT EXISTS idx_wr_address ON wallet_registry(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_wr_user_id ON wallet_registry(user_id);
 
 -- BUSINESSES
 CREATE TABLE IF NOT EXISTS businesses (
@@ -94,7 +106,7 @@ CREATE TABLE IF NOT EXISTS businesses (
 CREATE TABLE IF NOT EXISTS business_members (
   id          SERIAL PRIMARY KEY,
   business_id INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
-  user_id     INTEGER NOT NULL REFERENCES users(id)      ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role        biz_member_role NOT NULL,
   created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE (business_id, user_id)
@@ -104,9 +116,9 @@ CREATE TABLE IF NOT EXISTS business_members (
 CREATE TABLE IF NOT EXISTS business_wallets (
   id          SERIAL PRIMARY KEY,
   business_id INTEGER NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
-  address     VARCHAR(42)  NOT NULL,
-  chain_id    INTEGER      NOT NULL,
-  type        wallet_type  NOT NULL,
+  address     VARCHAR(42) NOT NULL,
+  chain_id    INTEGER NOT NULL,
+  type        wallet_type NOT NULL,
   label       VARCHAR(255),
   created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),
