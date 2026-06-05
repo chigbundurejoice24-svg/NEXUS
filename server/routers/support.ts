@@ -1,21 +1,39 @@
 /**
  * support.ts — Customer Care tRPC router
- *
- * Users: create tickets, view own tickets, reply, track status
- * Admins: see all tickets, update status, reply with isAdmin=true
+ * Fixed: notification inserts use raw SQL (avoids non-existent columns)
+ * Fixed: isAdmin uses email whitelist (consistent with trpc.ts)
+ * Fixed: added listMyTickets alias for frontend compatibility
  */
 import { z } from "zod";
-import { router, protectedProcedure } from "../_core/trpc";
+import { router, protectedProcedure, adminProcedure } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
-import { supportTickets, supportReplies, notifications, users } from "../../drizzle/schema";
-import { eq, desc, and, count } from "drizzle-orm";
+import { supportTickets, supportReplies, users } from "../../drizzle/schema";
+import { eq, desc, and, count, sql } from "drizzle-orm";
 
-async function isAdmin(userId: number): Promise<boolean> {
+const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS ?? "info@cozanet.net,fassdavid722@gmail.com")
+    .split(",").map(e => e.toLowerCase().trim()).filter(Boolean)
+);
+
+async function checkIsAdmin(userId: number): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
-  const [u] = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
-  return u?.role === "admin";
+  const [u] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+  return !!u?.email && ADMIN_EMAILS.has(u.email.toLowerCase().trim());
+}
+
+// Safe notification insert — only touches columns that exist in the DB
+async function insertNotification(db: any, userId: number | null, title: string, body: string, type: string) {
+  try {
+    await db.execute(
+      sql`INSERT INTO notifications (user_id, title, body, type, is_read, created_at)
+          VALUES (${userId}, ${title}, ${body}, ${type}, false, NOW())`
+    );
+  } catch (e) {
+    // Non-fatal — ticket still created
+    console.error("[support] notification insert failed:", e);
+  }
 }
 
 export const supportRouter = router({
@@ -27,7 +45,6 @@ export const supportRouter = router({
       priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).default("MEDIUM"),
     }))
     .mutation(async ({ input, ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
@@ -38,24 +55,32 @@ export const supportRouter = router({
         priority: input.priority,
       }).returning();
 
-      // Notify all admins (create a notification for admin users)
-      await db.insert(notifications).values({
-        userId:  null,   // NULL = broadcast — admins will filter
-        title:   `New Support Ticket #${ticket.id}`,
-        body:    `"${input.subject}" from user #${ctx.user.id}`,
-        type:    "SUPPORT",
-        actionUrl: `/admin?tab=support&ticket=${ticket.id}`,
-        sentByAdmin: null,
-      } as any);
+      // Notify support team (broadcast notification — admins see it)
+      await insertNotification(db, null,
+        `New Support Ticket #${ticket.id}`,
+        `"${input.subject}" submitted`,
+        "SUPPORT"
+      );
 
       return ticket;
     }),
 
   // ── User: list own tickets ────────────────────────────────────
+  listMyTickets: protectedProcedure
+    .input(z.object({ limit: z.number().default(50), offset: z.number().default(0) }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) return [];
+      return db.select().from(supportTickets)
+        .where(eq(supportTickets.userId, ctx.user.id))
+        .orderBy(desc(supportTickets.createdAt))
+        .limit(input.limit).offset(input.offset);
+    }),
+
+  // Keep old name for any legacy callers
   listUserTickets: protectedProcedure.query(async ({ ctx }) => {
-    if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
     const db = await getDb();
-    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+    if (!db) return [];
     return db.select().from(supportTickets)
       .where(eq(supportTickets.userId, ctx.user.id))
       .orderBy(desc(supportTickets.createdAt));
@@ -65,16 +90,15 @@ export const supportRouter = router({
   getTicket: protectedProcedure
     .input(z.object({ ticketId: z.number() }))
     .query(async ({ input, ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const admin = await isAdmin(ctx.user.id);
+      const admin = await checkIsAdmin(ctx.user.id);
       const [ticket] = await db.select().from(supportTickets)
         .where(eq(supportTickets.id, input.ticketId));
 
       if (!ticket) throw new TRPCError({ code: "NOT_FOUND" });
-      if (!admin && ticket.userId !== ctx.user.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (!admin && ticket.userId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN" });
 
       const replies = await db.select().from(supportReplies)
         .where(eq(supportReplies.ticketId, input.ticketId))
@@ -83,20 +107,19 @@ export const supportRouter = router({
       return { ticket, replies };
     }),
 
-  // ── User/Admin: reply to ticket ───────────────────────────────
+  // ── User/Admin: add reply ─────────────────────────────────────
   addReply: protectedProcedure
     .input(z.object({ ticketId: z.number(), message: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const admin = await isAdmin(ctx.user.id);
+      const admin = await checkIsAdmin(ctx.user.id);
       const [ticket] = await db.select().from(supportTickets)
         .where(eq(supportTickets.id, input.ticketId));
 
       if (!ticket) throw new TRPCError({ code: "NOT_FOUND" });
-      if (!admin && ticket.userId !== ctx.user.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (!admin && ticket.userId !== ctx.user.id) throw new TRPCError({ code: "FORBIDDEN" });
 
       await db.insert(supportReplies).values({
         ticketId: input.ticketId,
@@ -105,23 +128,20 @@ export const supportRouter = router({
         isAdmin:  admin,
       });
 
-      // Auto-update ticket status to IN_PROGRESS when admin replies
+      // Auto-update status when admin first replies
       if (admin && ticket.status === "OPEN") {
         await db.update(supportTickets)
           .set({ status: "IN_PROGRESS", updatedAt: new Date() })
           .where(eq(supportTickets.id, input.ticketId));
       }
 
-      // Notify ticket owner if admin replied
+      // Notify ticket owner when admin replies
       if (admin && ticket.userId !== ctx.user.id) {
-        await db.insert(notifications).values({
-          userId:      ticket.userId,
-          title:       `Support reply on Ticket #${ticket.id}`,
-          body:        `An admin replied to "${ticket.subject}"`,
-          type:        "SUPPORT",
-          actionUrl:   `/help?ticket=${ticket.id}`,
-          sentByAdmin: ctx.user.id,
-        } as any);
+        await insertNotification(db, ticket.userId,
+          `Reply on Ticket #${ticket.id}`,
+          `Aegis Support replied to your request: "${ticket.subject}"`,
+          "SUPPORT"
+        );
       }
 
       return { success: true };
@@ -135,30 +155,26 @@ export const supportRouter = router({
       status: z.enum(["OPEN","IN_PROGRESS","RESOLVED","CLOSED","ALL"]).default("ALL"),
     }))
     .query(async ({ input, ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const admin = await isAdmin(ctx.user.id);
-      if (!admin) throw new TRPCError({ code: "UNAUTHORIZED", message: "Admin only" });
+      const admin = await checkIsAdmin(ctx.user.id);
+      if (!admin) throw new TRPCError({ code: "FORBIDDEN", message: "Admin only" });
 
       const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      if (!db) return [];
 
-      const q = db.select({
-        id:       supportTickets.id,
-        userId:   supportTickets.userId,
-        subject:  supportTickets.subject,
-        status:   supportTickets.status,
-        priority: supportTickets.priority,
-        createdAt:supportTickets.createdAt,
-        userName: users.name,
-        userEmail:users.email,
+      return db.select({
+        id:        supportTickets.id,
+        userId:    supportTickets.userId,
+        subject:   supportTickets.subject,
+        status:    supportTickets.status,
+        priority:  supportTickets.priority,
+        createdAt: supportTickets.createdAt,
+        userName:  users.name,
+        userEmail: users.email,
       })
       .from(supportTickets)
       .leftJoin(users, eq(users.id, supportTickets.userId))
       .orderBy(desc(supportTickets.createdAt))
-      .limit(input.limit)
-      .offset(input.offset);
-
-      return q;
+      .limit(input.limit).offset(input.offset);
     }),
 
   // ── Admin: update ticket status ───────────────────────────────
@@ -168,49 +184,45 @@ export const supportRouter = router({
       status:   z.enum(["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]),
     }))
     .mutation(async ({ input, ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
-      const admin = await isAdmin(ctx.user.id);
-      if (!admin) throw new TRPCError({ code: "UNAUTHORIZED", message: "Admin only" });
+      const admin = await checkIsAdmin(ctx.user.id);
+      if (!admin) throw new TRPCError({ code: "FORBIDDEN", message: "Admin only" });
 
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
 
-      const [ticket] = await db.select().from(supportTickets).where(eq(supportTickets.id, input.ticketId));
+      const [ticket] = await db.select().from(supportTickets)
+        .where(eq(supportTickets.id, input.ticketId));
       if (!ticket) throw new TRPCError({ code: "NOT_FOUND" });
 
       await db.update(supportTickets)
         .set({ status: input.status, updatedAt: new Date() })
         .where(eq(supportTickets.id, input.ticketId));
 
-      // Notify user of resolution
-      if (input.status === "RESOLVED") {
-        await db.insert(notifications).values({
-          userId:      ticket.userId,
-          title:       `Ticket #${ticket.id} Resolved`,
-          body:        `Your support request "${ticket.subject}" has been resolved.`,
-          type:        "SUPPORT",
-          actionUrl:   `/help?ticket=${ticket.id}`,
-          sentByAdmin: ctx.user.id,
-        } as any);
+      // Notify user on resolution
+      if (input.status === "RESOLVED" || input.status === "CLOSED") {
+        await insertNotification(db, ticket.userId,
+          `Ticket #${ticket.id} ${input.status === "RESOLVED" ? "Resolved" : "Closed"}`,
+          `Your support request "${ticket.subject}" has been ${input.status.toLowerCase()}.`,
+          "SUPPORT"
+        );
       }
 
       return { success: true };
     }),
 
-  // ── Ticket count for badge ─────────────────────────────────────
+  // ── Open ticket count (badge) ─────────────────────────────────
   openCount: protectedProcedure.query(async ({ ctx }) => {
-    if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
     const db = await getDb();
-    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
-    const admin = await isAdmin(ctx.user.id);
+    if (!db) return { openCount: 0 };
+    const admin = await checkIsAdmin(ctx.user.id);
 
     if (admin) {
       const [row] = await db.select({ c: count() }).from(supportTickets)
         .where(eq(supportTickets.status, "OPEN"));
-      return { openCount: row?.c ?? 0 };
+      return { openCount: Number(row?.c ?? 0) };
     }
     const [row] = await db.select({ c: count() }).from(supportTickets)
       .where(and(eq(supportTickets.userId, ctx.user.id), eq(supportTickets.status, "OPEN")));
-    return { openCount: row?.c ?? 0 };
+    return { openCount: Number(row?.c ?? 0) };
   }),
 });
