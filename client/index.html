@@ -8,9 +8,26 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;1,14..32,400&display=swap" rel="stylesheet" />
     <link rel="icon" type="image/png" href="/logo.png" />
+    <!-- DIAGNOSTIC: capture ALL JS errors before module loads -->
+    <script>
+      window.__aegis_errors = [];
+      window.onerror = function(msg, src, line, col, err) {
+        window.__aegis_errors.push({msg, src, line, col, stack: err && err.stack});
+        var d = document.getElementById('aegis-err');
+        if (!d) { d = document.createElement('pre'); d.id='aegis-err'; d.style='position:fixed;top:0;left:0;right:0;background:red;color:white;padding:16px;z-index:99999;font-size:12px;white-space:pre-wrap;max-height:50vh;overflow:auto'; document.body.appendChild(d); }
+        d.textContent += (msg + ' @ ' + src + ':' + line + '\n' + (err && err.stack || '') + '\n---\n');
+      };
+      window.addEventListener('unhandledrejection', function(e) {
+        window.__aegis_errors.push({msg: String(e.reason), type:'promise'});
+        var d = document.getElementById('aegis-err');
+        if (!d) { d = document.createElement('pre'); d.id='aegis-err'; d.style='position:fixed;top:0;left:0;right:0;background:red;color:white;padding:16px;z-index:99999;font-size:12px;white-space:pre-wrap;max-height:50vh;overflow:auto'; document.body.appendChild(d); }
+        d.textContent += 'UNHANDLED PROMISE: ' + String(e.reason) + '\n' + (e.reason && e.reason.stack || '') + '\n---\n';
+      });
+    </script>
+    <script type="module" crossorigin src="/assets/index-BytFTiPo.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-IJBbAgdv.css">
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
