@@ -1,26 +1,32 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, Wallet, Send, PlusCircle, Receipt
+  LayoutDashboard, Wallet, ArrowLeftRight, Receipt, Banknote
 } from 'lucide-react'
 
 const mobileNavItems = [
-  { icon: LayoutDashboard, label: 'Home', href: '/' },
-  { icon: Wallet, label: 'Wallets', href: '/wallets' },
-  { icon: Send, label: 'Send', href: '/send' },
-  { icon: PlusCircle, label: 'Fund', href: '/fund' },
-  { icon: Receipt, label: 'Activity', href: '/transactions' },
+  { icon: LayoutDashboard, label: 'Home',     href: '/' },
+  { icon: Wallet,          label: 'Wallets',  href: '/wallets' },
+  { icon: Banknote,        label: 'Money',    href: '/money' },
+  { icon: ArrowLeftRight,  label: 'Rates',    href: '/rates' },
+  { icon: Receipt,         label: 'Activity', href: '/transactions' },
 ]
 
 export default function MobileNav() {
   const location = useLocation()
   const navigate = useNavigate()
 
+  // Consider /money and its old tab routes as "active" for the Money tab
+  const isMoneyActive = (href: string) =>
+    href === '/money'
+      ? location.pathname === '/money' || ['/send','/receive','/fund','/exchange'].includes(location.pathname)
+      : location.pathname === href
+
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-background/90 backdrop-blur-lg border-t border-border">
       <div className="flex items-center justify-around py-2">
         {mobileNavItems.map((item) => {
           const Icon = item.icon
-          const isActive = location.pathname === item.href
+          const isActive = isMoneyActive(item.href)
 
           return (
             <button
