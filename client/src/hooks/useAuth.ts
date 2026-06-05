@@ -15,8 +15,9 @@ export function useCurrentUser() {
   const hasToken = !!getToken();
   const { data, isLoading, error } = trpc.auth.me.useQuery(undefined, {
     retry: false,
-    staleTime: 60_000,
-    enabled: hasToken, // skip the network call entirely when not logged in
+    staleTime: 30_000,       // 30s cache — fast enough, not stale after login
+    refetchOnMount: true,    // always refetch when component mounts after navigate
+    enabled: hasToken,       // skip entirely when no token
   });
   const raw = (data as any) ?? null;
   return {
