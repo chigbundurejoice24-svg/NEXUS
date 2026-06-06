@@ -277,24 +277,19 @@ function KycSection() {
 // ── Main ──────────────────────────────────────────────────────────
 export default function Settings() {
   const { user, isLoading: authLoading } = useCurrentUser();
-  // Wait for auth to resolve before rendering any tRPC-dependent sections
+  const { currentTheme, setTheme, notifications, setNotifications } = usePreferences();
+  const { linkedWallets } = useWallets();
+  const [notifTx, setNotifTx]       = useState(true);
+  const [notifPromo, setNotifPromo]  = useState(false);
+
+  const darkMode = currentTheme === "dark";
+  function toggleDark() { setTheme(darkMode ? "light" : "dark"); }
+
   if (authLoading) return (
     <div className="flex items-center justify-center h-64">
       <Loader2 size={24} className="animate-spin text-aegis-tertiary-dark"/>
     </div>
   );
-  const { linkedWallets } = useWallets();
-  const [notifTx, setNotifTx]     = useState(true);
-  const [notifPromo, setNotifPromo] = useState(false);
-
-  const darkMode = document.documentElement.classList.contains("dark");
-  function toggleDark() {
-    const next = !darkMode;
-    document.documentElement.classList.toggle("dark", next);
-    localStorage.setItem("aegis_theme", next ? "dark" : "light");
-    // force re-render
-    window.dispatchEvent(new Event("aegis-theme-change"));
-  }
 
   const embeddedWallet = linkedWallets[0];
 
