@@ -37,6 +37,17 @@ function signToken(userId: number): string {
 function generateCode(): string {
   return String(Math.floor(100000 + Math.random() * 900000));
 }
+/** Generates a permanent human-readable Aegis ID: AEG-XXXXXXXX (8 uppercase alphanumeric chars) */
+function generateAegisId(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I, O, 0, 1 to avoid confusion
+  let id = "AEG-";
+  const randBytes = new Uint8Array(8);
+  // Use crypto-style randomness via Math.random fallback (server-side)
+  for (let i = 0; i < 8; i++) {
+    id += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return id;
+}
 
 async function sendResendEmail(to: string, code: string): Promise<void> {
   if (!RESEND_KEY) {
@@ -384,3 +395,4 @@ export const authRouter = router({
       return { submitted: true };
     }),
 });
+
