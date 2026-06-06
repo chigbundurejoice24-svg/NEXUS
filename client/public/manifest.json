@@ -1,0 +1,50 @@
+{
+  "name": "AEGIS by Cozanet",
+  "short_name": "AEGIS",
+  "description": "Move value across Africa instantly",
+  "theme_color": "#5B3CF5",
+  "background_color": "#0B0C10",
+  "display": "standalone",
+  "orientation": "portrait",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": [
+    "finance",
+    "utilities"
+  ],
+  "shortcuts": [
+    {
+      "name": "Send Money",
+      "short_name": "Send",
+      "url": "/money?tab=send"
+    },
+    {
+      "name": "My Wallets",
+      "short_name": "Wallets",
+      "url": "/wallets"
+    },
+    {
+      "name": "Fund Wallet",
+      "short_name": "Fund",
+      "url": "/money?tab=fund"
+    }
+  ]
+}
