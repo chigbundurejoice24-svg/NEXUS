@@ -3,11 +3,9 @@
  *
  * Wallet-to-wallet USDT transfer on BSC.
  * - Auto-detects connected Web3 wallets (EIP-6963 + legacy window.ethereum)
- * - Reads live USDT balance from source wallet (no hardcoding)
- * - Lets user pick FROM wallet (any connected provider) and TO wallet (any Aegis or external)
- * - Amount input with MAX button
- * - Calls transactions.create → build → sign → submit
- * - Works with MetaMask, Trust Wallet, OKX, Coinbase Wallet, Rabby, and any EIP-1193 wallet
+ * - Reads live USDT balance from source wallet
+ * - Direct eth_sendTransaction — no server build step needed for wallet-to-wallet
+ * - Works with MetaMask, Trust Wallet, OKX, Coinbase Wallet, Rabby, any EIP-1193 wallet
  */
 import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -15,37 +13,38 @@ import {
   X, ArrowRight, Loader2, CheckCircle, AlertTriangle,
   Wallet, ChevronDown, Zap, ExternalLink, RefreshCw, Shield,
 } from "lucide-react";
-import { trpc } from "@/lib/trpc";
 import { useWeb3Providers, type DetectedProvider } from "@/hooks/useWeb3Providers";
-import { createPublicClient, http, formatUnits } from "viem";
+import { createPublicClient, http, formatUnits, encodeFunctionData } from "viem";
 import { bsc } from "viem/chains";
 
 // ── Constants ─────────────────────────────────────────────────────
 const BSC_USDT     = "0x55d398326f99059fF775485246999027B3197955" as const;
 const USDT_DEC     = 18;
-const USDT_ABI     = [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }] as const;
+const USDT_ABI     = [
+  { name: "balanceOf", type: "function", stateMutability: "view",  inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
+  { name: "transfer",  type: "function", stateMutability: "nonpayable", inputs: [{ name: "to", type: "address" }, { name: "amount", type: "uint256" }], outputs: [{ type: "bool" }] },
+] as const;
 const BSC_CHAIN_ID = 56;
 
 // ── Helpers ───────────────────────────────────────────────────────
-function toRaw(amount: string, dec: number): string {
+function toRaw(amount: string, dec: number): bigint {
   try {
+    if (!amount || isNaN(parseFloat(amount))) return 0n;
     const [whole, frac = ""] = amount.split(".");
     const padded = (frac + "0".repeat(dec)).slice(0, dec);
-    return BigInt(whole + padded).toString();
-  } catch { return "0"; }
+    return BigInt((whole || "0") + padded);
+  } catch { return 0n; }
 }
 
-function fromRaw(raw: string | bigint, dec: number, dp = 4): string {
+function fromRaw(raw: bigint, dec: number, dp = 4): string {
   try {
-    const n = typeof raw === "bigint" ? raw : BigInt(raw);
     const d = 10n ** BigInt(dec);
-    const whole = n / d;
-    const frac  = (n % d).toString().padStart(dec, "0").slice(0, dp);
+    const whole = raw / d;
+    const frac  = (raw % d).toString().padStart(dec, "0").slice(0, dp);
     return `${whole}.${frac}`;
   } catch { return "0.0000"; }
 }
 
-// Wallet icon (emoji fallback for non-SVG icons)
 function WalletIcon({ icon, size = 20 }: { icon: string; size?: number }) {
   if (icon.startsWith("data:") || icon.startsWith("http")) {
     return <img src={icon} alt="" width={size} height={size} className="rounded-md" />;
@@ -60,402 +59,382 @@ interface StoredWallet { id: string; address: string; label: string; }
 
 interface Props {
   onClose: () => void;
-  myWallets: StoredWallet[];     // all wallets in the user's Aegis account
+  myWallets: StoredWallet[];
   embeddedAddress?: string | null;
 }
 
 // ── Component ─────────────────────────────────────────────────────
 export default function WalletTransferModal({ onClose, myWallets, embeddedAddress }: Props) {
-  const { providers, connected, connecting, error: providerError, connect, switchToBSC, sendTransactions, disconnect } = useWeb3Providers();
+  const { providers, connected, connecting, error: providerError, connect, switchToBSC, disconnect } = useWeb3Providers();
 
-  // Destination — all Aegis wallets (embedded + external)
   const allDest: StoredWallet[] = [
     ...(embeddedAddress ? [{ id: "__embedded__", address: embeddedAddress, label: "My Aegis Wallet (embedded)" }] : []),
     ...myWallets,
   ];
 
-  const [step,      setStep]      = useState<TransferStep>("setup");
-  const [fromProv,  setFromProv]  = useState<DetectedProvider | null>(null);
-  const [fromAddr,  setFromAddr]  = useState<string>("");
-  const [toWallet,  setToWallet]  = useState<StoredWallet | null>(allDest[0] ?? null);
-  const [amount,    setAmount]    = useState("");
-  const [usdtBal,   setUsdtBal]  = useState<bigint | null>(null);
-  const [balLoading,setBalLoad]  = useState(false);
-  const [showFrom,  setShowFrom]  = useState(false);
-  const [showTo,    setShowTo]    = useState(false);
-  const [txHashes,  setTxHashes]  = useState<string[]>([]);
-  const [txId,      setTxId]      = useState<string | null>(null);
-  const [txError,   setTxError]   = useState<string | null>(null);
-  const [progress,  setProgress]  = useState({ current: 0, total: 0, label: "" });
+  const [step,       setStep]      = useState<TransferStep>("setup");
+  const [fromProv,   setFromProv]  = useState<DetectedProvider | null>(null);
+  const [fromAddr,   setFromAddr]  = useState<string>("");
+  const [toWallet,   setToWallet]  = useState<StoredWallet | null>(allDest[0] ?? null);
+  const [amount,     setAmount]    = useState("");
+  const [usdtBal,    setUsdtBal]   = useState<bigint | null>(null);
+  const [balLoading, setBalLoad]   = useState(false);
+  const [showFrom,   setShowFrom]  = useState(false);
+  const [showTo,     setShowTo]    = useState(false);
+  const [txHash,     setTxHash]    = useState<string>("");
+  const [txError,    setTxError]   = useState<string | null>(null);
 
-  const createMut = trpc.transactions.create.useMutation();
-  const buildMut  = trpc.transactions.build.useMutation();
-  const submitMut = trpc.transactions.submit.useMutation();
-
-  // Fetch USDT balance when source wallet is selected
+  // Fetch USDT balance when source wallet changes
   const fetchBalance = useCallback(async (address: string) => {
     if (!address) return;
     setBalLoad(true);
     try {
       const client = createPublicClient({ chain: bsc, transport: http("https://rpc.ankr.com/bsc") });
       const bal = await client.readContract({
-        address: BSC_USDT, abi: USDT_ABI, functionName: "balanceOf", args: [address as `0x${string}`],
+        address: BSC_USDT, abi: USDT_ABI, functionName: "balanceOf",
+        args: [address as `0x${string}`],
       }) as bigint;
       setUsdtBal(bal);
-    } catch { setUsdtBal(null); }
-    finally { setBalLoad(false); }
+    } catch (e) {
+      console.warn("[Transfer] Balance fetch failed:", e);
+      setUsdtBal(null);
+    } finally { setBalLoad(false); }
   }, []);
 
   useEffect(() => { if (fromAddr) fetchBalance(fromAddr); }, [fromAddr, fetchBalance]);
 
-  // Connect a provider
+  // Connect a Web3 provider
   async function handleConnectProvider(detected: DetectedProvider) {
     setShowFrom(false);
     const wallet = await connect(detected);
     if (!wallet) return;
     setFromProv(detected);
     setFromAddr(wallet.address);
-    // Auto-switch to BSC
     if (wallet.chainId !== BSC_CHAIN_ID) {
       try { await switchToBSC(wallet.provider); } catch { /* user can switch manually */ }
     }
   }
 
-  // Max button
-  function handleMax() {
-    if (!usdtBal) return;
-    // Leave a tiny buffer — don't send entire balance (fee needs some USDT too)
-    const max = usdtBal * 95n / 100n;
-    setAmount(fromRaw(max, USDT_DEC, 6));
+  // Validate and move to confirm screen
+  function handleReview() {
+    setTxError(null);
+    if (!fromAddr)   { setTxError("Connect a source wallet first"); return; }
+    if (!toWallet)   { setTxError("Select a destination wallet"); return; }
+    if (fromAddr.toLowerCase() === toWallet.address.toLowerCase()) {
+      setTxError("Source and destination wallets must be different");
+      return;
+    }
+    const rawAmt = toRaw(amount, USDT_DEC);
+    if (rawAmt <= 0n) { setTxError("Enter a valid amount"); return; }
+    if (usdtBal !== null && rawAmt > usdtBal) { setTxError("Amount exceeds your USDT balance"); return; }
+    setStep("confirming");
   }
 
-  // Validate
-  const amountRaw = amount ? toRaw(amount, USDT_DEC) : "0";
-  const amountBig = amountRaw !== "0" ? BigInt(amountRaw) : 0n;
-  const isValid   = (
-    fromAddr &&
-    toWallet &&
-    fromAddr.toLowerCase() !== toWallet.address.toLowerCase() &&
-    amountBig > 0n &&
-    (!usdtBal || amountBig <= usdtBal)
-  );
-
-  // Execute transfer
-  async function handleTransfer() {
-    if (!isValid || !fromProv || !connected) return;
-    setStep("confirming");
+  // Execute the ERC-20 USDT transfer directly via the connected wallet
+  async function handleSend() {
+    if (!fromAddr || !toWallet || !fromProv) return;
+    setStep("signing");
     setTxError(null);
 
     try {
-      // 1. Create
-      setProgress({ current: 1, total: 5, label: "Creating transaction..." });
-      const tx = await createMut.mutateAsync({
-        referenceId:    `TRF_${Date.now()}`,
-        idempotencyKey: crypto.randomUUID(),
-        chainId:        BSC_CHAIN_ID,
-        wallet:         fromAddr,
-        recipient:      toWallet!.address,
-        amountRaw:      amountRaw,
-        tokenDecimals:  USDT_DEC,
-      });
-      setTxId(tx.id ?? tx);
+      const provider = connected?.provider ?? fromProv.provider;
+      if (!provider) throw new Error("Wallet provider not available — reconnect your wallet");
 
-      // 2. Build
-      setProgress({ current: 2, total: 5, label: "Building transactions..." });
-      const built = await buildMut.mutateAsync({ transactionId: tx.id ?? tx });
-
-      // 3. Switch network
-      setProgress({ current: 3, total: 5, label: "Switching to BSC..." });
-      const chainHex = await connected.provider.request({ method: "eth_chainId" });
+      // Ensure BSC
+      const chainHex: string = await provider.request({ method: "eth_chainId" });
       if (parseInt(chainHex, 16) !== BSC_CHAIN_ID) {
-        await switchToBSC(connected.provider);
+        await switchToBSC(provider);
       }
 
-      // 4. Sign + broadcast
-      setStep("signing");
-      setProgress({ current: 4, total: 5, label: `Sign ${built.transactions.length} transaction(s) in your wallet...` });
+      const rawAmt = toRaw(amount, USDT_DEC);
 
-      const hashes = await sendTransactions(
-        connected.provider,
-        fromAddr,
-        built.transactions,
-        (i, total, hash) => {
-          setTxHashes(prev => [...prev, hash]);
-          setProgress({ current: 4, total: 5, label: `Signed ${i}/${total}...` });
-        }
-      );
-
-      // 5. Submit
-      setProgress({ current: 5, total: 5, label: "Finalizing..." });
-      await submitMut.mutateAsync({
-        transactionId: tx.id ?? tx,
-        txHash: hashes[hashes.length - 1],
+      // Encode ERC-20 transfer(to, amount) calldata
+      const data = encodeFunctionData({
+        abi: USDT_ABI,
+        functionName: "transfer",
+        args: [toWallet.address as `0x${string}`, rawAmt],
       });
 
-      setTxHashes(hashes);
+      const hash: string = await provider.request({
+        method: "eth_sendTransaction",
+        params: [{
+          from:  fromAddr,
+          to:    BSC_USDT,
+          data,
+          value: "0x0",
+        }],
+      });
+
+      setTxHash(hash);
       setStep("done");
     } catch (e: any) {
-      const msg = e?.message ?? "Transfer failed";
-      setTxError(msg.includes("rejected") || msg.includes("denied") ? "Transaction rejected in wallet" : msg);
-      setStep("error");
+      if (e?.code === 4001 || e?.message?.includes("rejected")) {
+        setTxError("Transaction rejected. You can try again.");
+        setStep("confirming");
+      } else {
+        setTxError(e?.message ?? "Transaction failed — please try again");
+        setStep("error");
+      }
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm px-4 pb-4">
-      <motion.div
-        initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 30 }}
-        className="bg-card border border-border rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto"
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-card z-10">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-[#5B3CF5]/20 flex items-center justify-center">
-              <ArrowRight size={15} className="text-[#5B3CF5]" />
-            </div>
-            <h2 className="font-bold dark:text-white">Wallet Transfer</h2>
+  const rawAmt   = toRaw(amount, USDT_DEC);
+  const balFmt   = usdtBal !== null ? fromRaw(usdtBal, USDT_DEC, 4) : null;
+  const amtValid = rawAmt > 0n && (usdtBal === null || rawAmt <= usdtBal);
+
+  // ── Done ────────────────────────────────────────────────────────
+  if (step === "done") return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }}
+        className="bg-white dark:bg-gray-900 rounded-2xl p-8 w-full max-w-sm text-center space-y-4 shadow-2xl">
+        <div className="w-16 h-16 rounded-full bg-green-50 dark:bg-green-900/20 flex items-center justify-center mx-auto">
+          <CheckCircle size={32} className="text-green-500" />
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Transfer Sent!</h3>
+        <p className="text-sm text-gray-500">
+          {amount} USDT is on its way to <span className="font-medium">{toWallet?.label}</span> on BNB Chain.
+        </p>
+        <a href={`https://bscscan.com/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
+          className="flex items-center justify-center gap-1.5 text-xs text-[#5B3CF5] hover:underline">
+          View on BSCScan <ExternalLink size={12} />
+        </a>
+        <button onClick={onClose}
+          className="w-full py-3 bg-[#5B3CF5] text-white rounded-xl text-sm font-medium">
+          Done
+        </button>
+      </motion.div>
+    </motion.div>
+  );
+
+  // ── Confirm screen ───────────────────────────────────────────────
+  if (step === "confirming" || step === "signing") return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div initial={{ y: 20 }} animate={{ y: 0 }}
+        className="bg-white dark:bg-gray-900 rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-5">
+        <h3 className="text-base font-semibold text-gray-900 dark:text-white">Confirm Transfer</h3>
+        <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 space-y-3 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-500">From</span>
+            <span className="font-mono text-xs text-gray-900 dark:text-white">{fromAddr.slice(0,6)}…{fromAddr.slice(-4)}</span>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-aegis-bg-elevated transition-colors">
-            <X size={16} className="text-aegis-tertiary-dark" />
+          <div className="flex justify-between">
+            <span className="text-gray-500">To</span>
+            <span className="font-medium text-gray-900 dark:text-white">{toWallet?.label}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Amount</span>
+            <span className="font-semibold text-gray-900 dark:text-white">{amount} USDT (BEP20)</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Network fee</span>
+            <span className="text-gray-600 dark:text-gray-300">~$0.02 BNB</span>
+          </div>
+        </div>
+        {txError && (
+          <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-900/20 rounded-xl text-sm text-red-600 dark:text-red-400">
+            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+            {txError}
+          </div>
+        )}
+        <div className="flex gap-3">
+          <button onClick={() => setStep("setup")} disabled={step === "signing"}
+            className="flex-1 py-3 border border-gray-200 dark:border-gray-700 rounded-xl text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-40">
+            Back
+          </button>
+          <button onClick={handleSend} disabled={step === "signing"}
+            className="flex-1 py-3 bg-[#5B3CF5] text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-60">
+            {step === "signing" ? <><Loader2 size={16} className="animate-spin" /> Signing…</> : <>Send <ArrowRight size={16} /></>}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+
+  // ── Error screen ─────────────────────────────────────────────────
+  if (step === "error") return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <motion.div className="bg-white dark:bg-gray-900 rounded-2xl p-8 w-full max-w-sm text-center space-y-4 shadow-2xl">
+        <div className="w-16 h-16 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center mx-auto">
+          <AlertTriangle size={32} className="text-red-500" />
+        </div>
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Transfer Failed</h3>
+        <p className="text-sm text-gray-500">{txError ?? "Something went wrong"}</p>
+        <div className="flex gap-3">
+          <button onClick={() => setStep("setup")} className="flex-1 py-3 border border-gray-200 dark:border-gray-700 rounded-xl text-sm">Try Again</button>
+          <button onClick={onClose} className="flex-1 py-3 bg-[#5B3CF5] text-white rounded-xl text-sm font-medium">Close</button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+
+  // ── Setup screen ─────────────────────────────────────────────────
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <motion.div initial={{ y: 60 }} animate={{ y: 0 }} exit={{ y: 60 }}
+        className="bg-white dark:bg-gray-900 rounded-t-3xl sm:rounded-2xl w-full sm:max-w-md shadow-2xl">
+
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-gray-100 dark:border-gray-800">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 dark:text-white">Transfer USDT</h2>
+            <p className="text-xs text-gray-500 mt-0.5">BNB Chain (BEP20)</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center hover:opacity-80">
+            <X size={16} className="text-gray-500" />
           </button>
         </div>
 
         <div className="p-5 space-y-5">
-
-          {/* ── SETUP ── */}
-          {(step === "setup" || step === "confirming") && (
-            <>
-              {/* FROM — Web3 wallet picker */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-aegis-tertiary-dark uppercase tracking-wide">From (Source)</label>
-
+          {/* FROM wallet */}
+          <div>
+            <label className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2 block">From (Connected Wallet)</label>
+            <div className="relative">
+              <button onClick={() => setShowFrom(!showFrom)}
+                className="w-full flex items-center gap-3 p-3.5 border border-gray-200 dark:border-gray-700 rounded-xl hover:border-[#5B3CF5]/50 transition-colors">
+                <div className="w-8 h-8 rounded-lg bg-[#5B3CF5]/10 flex items-center justify-center shrink-0">
+                  <Wallet size={16} className="text-[#5B3CF5]" />
+                </div>
                 {fromAddr ? (
-                  <div className="flex items-center gap-3 p-3.5 bg-aegis-bg-elevated border border-border rounded-xl">
-                    <WalletIcon icon={fromProv?.info.icon ?? "💼"} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold dark:text-white">{fromProv?.info.name ?? "Wallet"}</p>
-                      <p className="text-xs font-mono text-aegis-tertiary-dark truncate">{fromAddr.slice(0,10)}…{fromAddr.slice(-6)}</p>
-                    </div>
-                    <div className="text-right">
-                      {balLoading ? (
-                        <Loader2 size={14} className="animate-spin text-aegis-tertiary-dark" />
-                      ) : usdtBal !== null ? (
-                        <div>
-                          <p className="text-xs font-bold text-[#5B3CF5]">{fromRaw(usdtBal, USDT_DEC, 2)} USDT</p>
-                          <p className="text-[10px] text-aegis-tertiary-dark">BSC balance</p>
-                        </div>
-                      ) : null}
-                    </div>
-                    <button onClick={() => { disconnect(); setFromAddr(""); setFromProv(null); setUsdtBal(null); }}
-                      className="p-1 rounded-lg hover:bg-red-500/10 text-aegis-tertiary-dark hover:text-red-400 transition-colors">
-                      <X size={13} />
-                    </button>
+                  <div className="flex-1 text-left">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">
+                      {fromProv?.info.name ?? "Connected Wallet"}
+                    </p>
+                    <p className="text-xs font-mono text-gray-500">{fromAddr.slice(0,6)}…{fromAddr.slice(-4)}</p>
                   </div>
                 ) : (
-                  <div className="relative">
-                    <button onClick={() => setShowFrom(!showFrom)}
-                      className="w-full flex items-center justify-between p-3.5 bg-aegis-bg-elevated border border-border rounded-xl hover:border-[#5B3CF5]/50 transition-colors">
-                      <div className="flex items-center gap-2 text-sm text-aegis-tertiary-dark">
-                        <Wallet size={15} />
-                        {connecting ? "Connecting…" : providers.length > 0 ? "Select wallet to connect" : "No wallets detected"}
-                      </div>
-                      {connecting ? <Loader2 size={14} className="animate-spin" /> : <ChevronDown size={14} className="text-aegis-tertiary-dark" />}
-                    </button>
-
-                    <AnimatePresence>
-                      {showFrom && (
-                        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-                          className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-xl z-20 overflow-hidden">
-                          {providers.length === 0 ? (
-                            <div className="p-4 text-center">
-                              <p className="text-sm text-aegis-secondary-dark">No wallet extensions found.</p>
-                              <p className="text-xs text-aegis-tertiary-dark mt-1">Install MetaMask, Trust Wallet, or OKX Wallet.</p>
-                            </div>
-                          ) : (
-                            providers.map(p => (
-                              <button key={p.info.rdns} onClick={() => handleConnectProvider(p)}
-                                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-aegis-bg-elevated transition-colors text-left">
-                                <WalletIcon icon={p.info.icon} size={22} />
-                                <span className="text-sm font-medium dark:text-white">{p.info.name}</span>
-                              </button>
-                            ))
-                          )}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
+                  <span className="flex-1 text-left text-sm text-gray-400">Select source wallet…</span>
                 )}
-                {providerError && <p className="text-xs text-red-400">{providerError}</p>}
-              </div>
-
-              {/* TO — destination wallet picker */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-aegis-tertiary-dark uppercase tracking-wide">To (Destination)</label>
-                <div className="relative">
-                  <button onClick={() => setShowTo(!showTo)}
-                    className="w-full flex items-center justify-between p-3.5 bg-aegis-bg-elevated border border-border rounded-xl hover:border-[#5B3CF5]/50 transition-colors">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-lg bg-[#5B3CF5]/20 flex items-center justify-center flex-shrink-0">
-                        <Shield size={12} className="text-[#5B3CF5]" />
-                      </div>
-                      {toWallet ? (
-                        <div className="text-left">
-                          <p className="text-sm font-medium dark:text-white">{toWallet.label}</p>
-                          <p className="text-xs font-mono text-aegis-tertiary-dark">{toWallet.address.slice(0,10)}…{toWallet.address.slice(-6)}</p>
-                        </div>
-                      ) : <span className="text-sm text-aegis-tertiary-dark">Select destination wallet</span>}
-                    </div>
-                    <ChevronDown size={14} className="text-aegis-tertiary-dark flex-shrink-0" />
-                  </button>
-
-                  <AnimatePresence>
-                    {showTo && (
-                      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-                        className="absolute top-full left-0 right-0 mt-1 bg-card border border-border rounded-xl shadow-xl z-20 max-h-48 overflow-y-auto">
-                        {allDest.filter(w => w.address.toLowerCase() !== fromAddr.toLowerCase()).map(w => (
-                          <button key={w.id} onClick={() => { setToWallet(w); setShowTo(false); }}
-                            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-aegis-bg-elevated transition-colors text-left">
-                            <div className="w-7 h-7 rounded-lg bg-[#5B3CF5]/20 flex items-center justify-center flex-shrink-0">
-                              <Shield size={13} className="text-[#5B3CF5]" />
-                            </div>
-                            <div>
-                              <p className="text-sm font-medium dark:text-white">{w.label}</p>
-                              <p className="text-xs font-mono text-aegis-tertiary-dark">{w.address.slice(0,10)}…{w.address.slice(-6)}</p>
-                            </div>
-                          </button>
-                        ))}
-                        {allDest.filter(w => w.address.toLowerCase() !== fromAddr.toLowerCase()).length === 0 && (
-                          <div className="p-4 text-center text-xs text-aegis-tertiary-dark">
-                            No other wallets. Add wallets on this page first.
-                          </div>
-                        )}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </div>
-
-              {/* AMOUNT */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-aegis-tertiary-dark uppercase tracking-wide">Amount (USDT)</label>
-                <div className="flex items-center gap-2 p-3.5 bg-aegis-bg-elevated border border-border rounded-xl focus-within:border-[#5B3CF5]/50">
-                  <input
-                    type="number"
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                    placeholder="0.00"
-                    min="0"
-                    step="0.01"
-                    className="flex-1 bg-transparent text-xl font-bold outline-none dark:text-white"
-                  />
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {usdtBal !== null && (
-                      <button onClick={handleMax}
-                        className="text-xs px-2 py-1 rounded-lg bg-[#5B3CF5]/20 text-[#5B3CF5] hover:bg-[#5B3CF5]/30 font-semibold transition-colors">
-                        MAX
-                      </button>
-                    )}
-                    <span className="text-sm font-bold text-aegis-tertiary-dark">USDT</span>
-                  </div>
-                </div>
-                {usdtBal !== null && (
-                  <div className="flex items-center justify-between text-xs text-aegis-tertiary-dark px-1">
-                    <span>Available: {fromRaw(usdtBal, USDT_DEC, 4)} USDT</span>
-                    {amountBig > 0n && amountBig > (usdtBal ?? 0n) && (
-                      <span className="text-red-400 flex items-center gap-1"><AlertTriangle size={10}/> Insufficient balance</span>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Info */}
-              <div className="flex items-start gap-2 px-3 py-2.5 bg-[#5B3CF5]/10 border border-[#5B3CF5]/20 rounded-xl text-xs text-[#5B3CF5]">
-                <Zap size={12} className="mt-0.5 flex-shrink-0"/>
-                <span>0.5% Aegis protocol fee (reduced by holding CZN). BNB gas required from source wallet.</span>
-              </div>
-
-              {step === "confirming" && (
-                <div className="flex items-center gap-3 px-4 py-3 bg-aegis-bg-elevated rounded-xl">
-                  <Loader2 size={16} className="animate-spin text-[#5B3CF5] flex-shrink-0"/>
-                  <p className="text-sm text-aegis-secondary-dark">{progress.label}</p>
-                </div>
-              )}
-
-              <button
-                onClick={handleTransfer}
-                disabled={!isValid || step === "confirming"}
-                className="w-full py-4 gradient-brand text-white rounded-2xl font-bold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {step === "confirming" ? <Loader2 size={18} className="animate-spin"/> : <ArrowRight size={18}/>}
-                {step === "confirming" ? "Processing…" : "Transfer USDT"}
+                <ChevronDown size={16} className="text-gray-400 shrink-0" />
               </button>
-            </>
-          )}
 
-          {/* ── SIGNING ── */}
-          {step === "signing" && (
-            <div className="flex flex-col items-center py-12 space-y-4 text-center">
-              <div className="w-16 h-16 rounded-full bg-[#5B3CF5]/20 border border-[#5B3CF5]/40 flex items-center justify-center">
-                <Loader2 size={28} className="animate-spin text-[#5B3CF5]" />
+              <AnimatePresence>
+                {showFrom && (
+                  <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                    className="absolute top-full mt-1 left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl z-10 overflow-hidden">
+                    {providers.length === 0 ? (
+                      <div className="p-4 text-center text-sm text-gray-500">
+                        No wallets detected. Install MetaMask or Trust Wallet.
+                      </div>
+                    ) : (
+                      providers.map(p => (
+                        <button key={p.info.uuid} onClick={() => handleConnectProvider(p)}
+                          className="w-full flex items-center gap-3 p-3.5 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                          <WalletIcon icon={p.info.icon} size={24} />
+                          <div className="text-left">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white">{p.info.name}</p>
+                            <p className="text-xs text-gray-400">Click to connect</p>
+                          </div>
+                          {connecting && <Loader2 size={14} className="animate-spin ml-auto text-gray-400" />}
+                        </button>
+                      ))
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Balance display */}
+            {fromAddr && (
+              <div className="mt-2 flex items-center justify-between px-1">
+                <span className="text-xs text-gray-500">USDT Balance (BSC)</span>
+                <span className="text-xs font-medium text-gray-900 dark:text-white">
+                  {balLoading ? <Loader2 size={12} className="animate-spin inline" /> : balFmt !== null ? `${balFmt} USDT` : "—"}
+                </span>
               </div>
-              <p className="text-lg font-bold dark:text-white">Waiting for signature…</p>
-              <p className="text-sm text-aegis-tertiary-dark max-w-[260px]">{progress.label}</p>
-              {txHashes.length > 0 && (
-                <div className="space-y-1 w-full">
-                  {txHashes.map((h, i) => (
-                    <a key={i} href={`https://bscscan.com/tx/${h}`} target="_blank" rel="noreferrer"
-                      className="flex items-center justify-center gap-1.5 text-xs text-[#5B3CF5] hover:underline">
-                      Tx {i+1}: {h.slice(0,10)}…{h.slice(-6)} <ExternalLink size={10}/>
-                    </a>
-                  ))}
+            )}
+          </div>
+
+          {/* TO wallet */}
+          <div>
+            <label className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2 block">To (Aegis Wallet)</label>
+            <div className="relative">
+              <button onClick={() => setShowTo(!showTo)}
+                className="w-full flex items-center gap-3 p-3.5 border border-gray-200 dark:border-gray-700 rounded-xl hover:border-[#5B3CF5]/50 transition-colors">
+                <div className="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-900/20 flex items-center justify-center shrink-0">
+                  <Shield size={16} className="text-green-600 dark:text-green-400" />
                 </div>
-              )}
+                {toWallet ? (
+                  <div className="flex-1 text-left">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">{toWallet.label}</p>
+                    <p className="text-xs font-mono text-gray-500">{toWallet.address.slice(0,6)}…{toWallet.address.slice(-4)}</p>
+                  </div>
+                ) : (
+                  <span className="flex-1 text-left text-sm text-gray-400">Select destination…</span>
+                )}
+                <ChevronDown size={16} className="text-gray-400 shrink-0" />
+              </button>
+
+              <AnimatePresence>
+                {showTo && (
+                  <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                    className="absolute top-full mt-1 left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl z-10 overflow-hidden max-h-48 overflow-y-auto">
+                    {allDest.length === 0 ? (
+                      <div className="p-4 text-center text-sm text-gray-500">No wallets in your Aegis account yet.</div>
+                    ) : (
+                      allDest.map(w => (
+                        <button key={w.id} onClick={() => { setToWallet(w); setShowTo(false); }}
+                          className={`w-full flex items-center gap-3 p-3.5 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${toWallet?.id === w.id ? "bg-[#5B3CF5]/5" : ""}`}>
+                          <div className="w-7 h-7 rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center shrink-0">
+                            <Wallet size={14} className="text-gray-500" />
+                          </div>
+                          <div className="text-left">
+                            <p className="text-sm font-medium text-gray-900 dark:text-white">{w.label}</p>
+                            <p className="text-xs font-mono text-gray-500">{w.address.slice(0,6)}…{w.address.slice(-4)}</p>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
+
+          {/* Amount */}
+          <div>
+            <label className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2 block">Amount (USDT)</label>
+            <div className="flex items-center border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden focus-within:border-[#5B3CF5]/60 transition-colors">
+              <input
+                type="number" min="0" step="0.01" placeholder="0.00" value={amount}
+                onChange={e => setAmount(e.target.value)}
+                className="flex-1 px-4 py-3.5 text-sm bg-transparent outline-none text-gray-900 dark:text-white placeholder-gray-400"
+              />
+              <button
+                onClick={() => balFmt && setAmount(fromRaw(usdtBal!, USDT_DEC, 6))}
+                className="px-4 py-3.5 text-xs font-semibold text-[#5B3CF5] hover:bg-[#5B3CF5]/5 transition-colors border-l border-gray-200 dark:border-gray-700">
+                MAX
+              </button>
+            </div>
+          </div>
+
+          {/* Error */}
+          {(txError || providerError) && (
+            <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-900/20 rounded-xl text-sm text-red-600 dark:text-red-400">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              {txError ?? providerError}
             </div>
           )}
 
-          {/* ── DONE ── */}
-          {step === "done" && (
-            <div className="flex flex-col items-center py-10 space-y-4 text-center">
-              <div className="w-16 h-16 rounded-full bg-green-500/20 border border-green-500/40 flex items-center justify-center">
-                <CheckCircle size={32} className="text-green-400" />
-              </div>
-              <h3 className="text-xl font-bold dark:text-white">Transfer Submitted!</h3>
-              <p className="text-sm text-aegis-tertiary-dark">
-                {amount} USDT → {toWallet?.label ?? "destination"}
-              </p>
-              <div className="w-full space-y-2">
-                {txHashes.map((h, i) => (
-                  <a key={i} href={`https://bscscan.com/tx/${h}`} target="_blank" rel="noreferrer"
-                    className="flex items-center justify-center gap-1.5 text-xs text-[#5B3CF5] py-2 border border-[#5B3CF5]/30 rounded-xl hover:bg-[#5B3CF5]/10 transition-colors">
-                    View Tx {i+1} on BSCScan <ExternalLink size={11}/>
-                  </a>
-                ))}
-              </div>
-              <p className="text-xs text-aegis-tertiary-dark">Status: SUBMITTED → CONFIRMED → SETTLED (auto)</p>
-              <button onClick={onClose} className="w-full py-3 gradient-brand text-white rounded-xl font-semibold">Done</button>
-            </div>
-          )}
+          {/* Info */}
+          <div className="flex items-center gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-xl">
+            <Zap size={14} className="text-blue-500 shrink-0" />
+            <p className="text-xs text-blue-600 dark:text-blue-400">
+              Transfer goes directly on-chain — no AEGIS fees. Only BNB gas (~$0.02) applies.
+            </p>
+          </div>
 
-          {/* ── ERROR ── */}
-          {step === "error" && (
-            <div className="flex flex-col items-center py-10 space-y-4 text-center">
-              <div className="w-16 h-16 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center">
-                <AlertTriangle size={28} className="text-red-400" />
-              </div>
-              <h3 className="text-lg font-bold dark:text-white">Transfer Failed</h3>
-              <p className="text-sm text-red-400 max-w-[280px]">{txError}</p>
-              <div className="flex gap-3 w-full">
-                <button onClick={() => { setStep("setup"); setTxError(null); setTxHashes([]); }}
-                  className="flex-1 py-3 border border-border rounded-xl text-sm font-semibold text-aegis-secondary-dark hover:bg-aegis-bg-elevated transition-colors flex items-center justify-center gap-1.5">
-                  <RefreshCw size={13}/> Try Again
-                </button>
-                <button onClick={onClose} className="flex-1 py-3 gradient-brand text-white rounded-xl text-sm font-semibold">Close</button>
-              </div>
-            </div>
-          )}
-
+          {/* Send button */}
+          <button onClick={handleReview} disabled={!fromAddr || !toWallet || !amount || !amtValid}
+            className="w-full py-4 bg-[#5B3CF5] text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-2 hover:bg-[#4b2ce5] transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            Review Transfer <ArrowRight size={16} />
+          </button>
         </div>
       </motion.div>
-    </div>
+    </motion.div>
   );
 }
