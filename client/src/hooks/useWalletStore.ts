@@ -4,7 +4,7 @@
  * - Parallel price+balance fetch — no waterfall
  * - 60s balance cache, no repeated fetches on re-render
  */
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   loadWallets, addWallet, removeWallet, renameWallet,
   fetchWalletBalances, fetchLivePrices, migrateWalletsToUser,
@@ -19,7 +19,7 @@ const DEFAULT_PRICES = { eth: 3500, bnb: 620, matic: 0.85 };
 export function useWalletStore() {
   const { rate: NGN_PER_USD }   = useNgnRate();
   const { user }                = useCurrentUser();
-  const [wallets, setWallets]   = useState<StoredWallet[]>([]);  // loaded after userId known
+  const [wallets, setWallets]   = useState<StoredWallet[]>([]);
   const [balances, setBalances] = useState<Record<string, WalletWithBalance>>({});
   const [prices, setPrices]     = useState(DEFAULT_PRICES);
   const fetchingRef             = useRef<Set<string>>(new Set());
@@ -37,33 +37,42 @@ export function useWalletStore() {
 
   // Build full list: embedded wallet (from DB) + manually added wallets
   const embeddedAddress = (user as any)?.walletAddress as string | null ?? null;
-  const embeddedWallet: StoredWallet | null = embeddedAddress ? {
-    id:      `embedded_${embeddedAddress}`,
-    address: embeddedAddress.toLowerCase(),
-    label:   "My Aegis Wallet",
-    chainId: 56,
-    addedAt: new Date(0).toISOString(),
-  } : null;
 
-  // Merge: embedded first, then localStorage wallets (dedup by address)
-  const allAddresses = new Set(wallets.map(w => w.address.toLowerCase()));
-  const mergedWallets: StoredWallet[] = [
-    ...(embeddedWallet && !allAddresses.has(embeddedWallet.address) ? [embeddedWallet] : []),
-    ...wallets,
-  ];
+  // Stable merged wallet list — only recompute when wallets or embeddedAddress changes
+  const mergedWallets = useMemo<StoredWallet[]>(() => {
+    const allAddresses = new Set(wallets.map(w => w.address.toLowerCase()));
+    const embeddedWallet: StoredWallet | null = embeddedAddress ? {
+      id:      `embedded_${embeddedAddress}`,
+      address: embeddedAddress.toLowerCase(),
+      label:   "My Aegis Wallet",
+      chainId: 56,
+      addedAt: new Date(0).toISOString(),
+    } : null;
+    return [
+      ...(embeddedWallet && !allAddresses.has(embeddedWallet.address) ? [embeddedWallet] : []),
+      ...wallets,
+    ];
+  }, [wallets, embeddedAddress]);
 
-  // Fetch balances for all wallets
+  // Stable key for the merged wallet list so useEffect doesn't fire every render
+  const mergedKey = useMemo(
+    () => mergedWallets.map(w => w.id).join(","),
+    [mergedWallets]
+  );
+
+  // Fetch balances for all wallets — only when the wallet list actually changes
   useEffect(() => {
     if (mergedWallets.length === 0) return;
     mergedWallets.forEach((w) => {
       if (fetchingRef.current.has(w.id)) return;
-      fetchingRef.current.add(w.id);
+      // Already fetched recently? Skip
+      const existing = balances[w.id];
+      if (existing && !existing.loading && existing.error === null) return;
 
+      fetchingRef.current.add(w.id);
       setBalances(prev => ({
         ...prev,
-        [w.id]: prev[w.id]?.loading === false
-          ? prev[w.id]
-          : { ...w, balanceUsd: 0, assets: [], loading: true, error: null },
+        [w.id]: { ...w, balanceUsd: 0, assets: [], loading: true, error: null },
       }));
 
       fetchWalletBalances(w.address as `0x${string}`, prices.eth, prices.bnb, prices.matic)
@@ -77,24 +86,37 @@ export function useWalletStore() {
         .finally(() => fetchingRef.current.delete(w.id));
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wallets, prices, embeddedAddress]);
+  }, [mergedKey, prices]);
 
   const add = useCallback((address: string, label: string): string | null => {
     if (!isValidAddress(address)) return "Invalid Ethereum address";
     addWallet(address, label, 56, userId);
     setWallets(loadWallets(userId));
+    // Clear cached balance so it re-fetches
+    const key = address.toLowerCase();
+    setBalances(prev => {
+      const next = { ...prev };
+      Object.keys(next).forEach(k => { if (next[k].address === key) delete next[k]; });
+      return next;
+    });
     return null;
   }, [userId]);
 
   const remove = useCallback((id: string) => {
     removeWallet(id);
-    setWallets(loadWallets());
+    setWallets(loadWallets(userId));
     setBalances(prev => { const n = { ...prev }; delete n[id]; return n; });
-  }, []);
+  }, [userId]);
 
   const rename = useCallback((id: string, label: string) => {
     renameWallet(id, label);
-    setWallets(loadWallets());
+    setWallets(loadWallets(userId));
+  }, [userId]);
+
+  const refresh = useCallback(() => {
+    // Force re-fetch all balances
+    setBalances({});
+    fetchingRef.current.clear();
   }, []);
 
   const walletsWithBalances: WalletWithBalance[] = mergedWallets.map(w =>
@@ -104,5 +126,5 @@ export function useWalletStore() {
   const totalUsd = walletsWithBalances.reduce((s, w) => s + w.balanceUsd, 0);
   const totalNgn = totalUsd * NGN_PER_USD;
 
-  return { wallets: walletsWithBalances, totalUsd, totalNgn, add, remove, rename, prices, NGN_PER_USD };
+  return { wallets: walletsWithBalances, totalUsd, totalNgn, add, remove, rename, refresh, prices, NGN_PER_USD };
 }
