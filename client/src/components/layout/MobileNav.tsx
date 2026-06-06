@@ -1,12 +1,12 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, Wallet, ArrowLeftRight, Receipt, Wallet2
+  LayoutDashboard, Wallet, ArrowLeftRight, Receipt, Coins
 } from 'lucide-react'
 
 const mobileNavItems = [
   { icon: LayoutDashboard, label: 'Home',     href: '/' },
   { icon: Wallet,          label: 'Wallets',  href: '/wallets' },
-  { icon: Wallet2,        label: 'Money',    href: '/money' },
+  { icon: Coins,           label: 'Money',    href: '/money' },
   { icon: ArrowLeftRight,  label: 'Rates',    href: '/rates' },
   { icon: Receipt,         label: 'Activity', href: '/transactions' },
 ]
@@ -15,7 +15,6 @@ export default function MobileNav() {
   const location = useLocation()
   const navigate = useNavigate()
 
-  // Consider /money and its old tab routes as "active" for the Money tab
   const isMoneyActive = (href: string) =>
     href === '/money'
       ? location.pathname === '/money' || ['/send','/receive','/fund','/exchange'].includes(location.pathname)
