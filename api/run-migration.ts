@@ -73,8 +73,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ON CONFLICT DO NOTHING`);
     results.push(`✅ vault backfill: ${rowCount ?? 0} users`);
 
+    // aegis_id — permanent human-readable user ID (AEG-XXXXXXXX)
+    await db.execute(`ALTER TABLE users ADD COLUMN IF NOT EXISTS aegis_id VARCHAR(12)`);
+    results.push("✅ users.aegis_id");
+    await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_aegis_id ON users(aegis_id) WHERE aegis_id IS NOT NULL`);
+    results.push("✅ idx_users_aegis_id");
+
     return res.status(200).json({ success: true, results });
   } catch (e: any) {
     return res.status(500).json({ success: false, error: e.message, results });
   }
 }
+
