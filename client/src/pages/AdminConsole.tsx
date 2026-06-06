@@ -2,7 +2,7 @@
  * AdminConsole.tsx — Full company-grade admin dashboard
  *
  * Tabs: Overview | Users | KYC Queue | Transactions | Support | Broadcast | Settings
- * Admin emails: info@cozanet.net | fassdavid722@gmail.com
+ * Admin access: email whitelist (ADMIN_EMAILS env) OR DB role="admin"
  */
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -15,7 +15,8 @@ import {
   CheckCircle, XCircle, Clock, ChevronLeft,
   Settings, Activity, Lock, Unlock,
   Mail, Star, Info, Hash, Check,
-  BarChart2,
+  BarChart2, Coins, ShieldAlert, Eye, EyeOff,
+  Download, Upload, UserPlus, Trash2, Edit3,
 } from "lucide-react";
 
 type Tab = "overview" | "users" | "kyc" | "transactions" | "support" | "broadcast" | "settings";
@@ -24,6 +25,10 @@ const fmt = (n: number | string | undefined) => Number(n ?? 0).toLocaleString("e
 const fmtDate = (d: string | Date | null | undefined) => {
   if (!d) return "—";
   return new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+};
+const fmtDateTime = (d: string | Date | null | undefined) => {
+  if (!d) return "—";
+  return new Date(d).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -37,23 +42,21 @@ const STATUS_COLORS: Record<string, string> = {
   REJECTED: "bg-red-500/20 text-red-400",
 };
 
-const KYC_LABELS: Record<string, string> = {
-  NONE: "Unverified", PENDING: "Pending", VERIFIED: "Verified", REJECTED: "Rejected",
-};
-
-// ── User Detail Modal ────────────────────────────────────────────────────────
+// ── User Detail Modal ──────────────────────────────────────────────────────────
 function UserDetail({ userId, onClose }: { userId: number; onClose: () => void }) {
   const utils = trpc.useUtils();
   const { data, isLoading } = trpc.admin.getUserDetail.useQuery({ userId });
   const suspend    = trpc.admin.suspendUser.useMutation({ onSuccess: () => { utils.admin.getUserDetail.invalidate({ userId }); utils.admin.listUsers.invalidate(); } });
   const unsuspend  = trpc.admin.unsuspendUser.useMutation({ onSuccess: () => { utils.admin.getUserDetail.invalidate({ userId }); utils.admin.listUsers.invalidate(); } });
   const approveKyc = trpc.admin.approveKyc.useMutation({ onSuccess: () => { utils.admin.getUserDetail.invalidate({ userId }); utils.admin.listUsers.invalidate(); utils.admin.stats.invalidate(); } });
-  const rejectKyc  = trpc.admin.rejectKyc.useMutation({ onSuccess:  () => { utils.admin.getUserDetail.invalidate({ userId }); utils.admin.listUsers.invalidate(); utils.admin.stats.invalidate(); } });
-  const setRole    = trpc.admin.setRole.useMutation({ onSuccess:    () => { utils.admin.getUserDetail.invalidate({ userId }); utils.admin.listUsers.invalidate(); } });
-  const flag       = trpc.admin.flagUser.useMutation({ onSuccess:   () => utils.admin.getUserDetail.invalidate({ userId }) });
+  const rejectKyc  = trpc.admin.rejectKyc.useMutation({ onSuccess: () => { utils.admin.getUserDetail.invalidate({ userId }); utils.admin.listUsers.invalidate(); utils.admin.stats.invalidate(); } });
+  const setRole    = trpc.admin.setRole.useMutation({ onSuccess: () => { utils.admin.getUserDetail.invalidate({ userId }); utils.admin.listUsers.invalidate(); } });
   const notifyUser = trpc.notify.sendToUser.useMutation();
+  const flag       = trpc.admin.flagUser.useMutation({ onSuccess: () => utils.admin.getUserDetail.invalidate({ userId }) });
   const [notifTitle, setNotifTitle] = useState("");
   const [notifBody,  setNotifBody]  = useState("");
+  const [flagReason, setFlagReason] = useState("");
+  const [showFlag,   setShowFlag]   = useState(false);
 
   if (isLoading) return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
@@ -65,99 +68,117 @@ function UserDetail({ userId, onClose }: { userId: number; onClose: () => void }
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="bg-[#111318] border border-white/10 rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-5 border-b border-white/10">
+      <div className="bg-[#111318] border border-white/10 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-white/10 sticky top-0 bg-[#111318] z-10">
           <h2 className="text-lg font-semibold text-white">User #{userId}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={20}/></button>
         </div>
         <div className="p-5 space-y-5">
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span className="text-gray-400">Name</span><span className="text-white font-medium">{u.name ?? "—"}</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">Email</span><span className="text-white font-medium break-all">{u.email ?? "—"}</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">Role</span>
-              <span className={`px-2 py-0.5 rounded text-xs font-medium ${u.role === "admin" ? "bg-purple-500/20 text-purple-400" : "bg-gray-500/20 text-gray-400"}`}>{u.role}</span>
-            </div>
-            <div className="flex justify-between"><span className="text-gray-400">KYC</span>
-              <span className={`px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[u.kycStatus ?? "NONE"]}`}>{KYC_LABELS[u.kycStatus ?? "NONE"]}</span>
-            </div>
-            <div className="flex justify-between"><span className="text-gray-400">Status</span>
-              <span className={`px-2 py-0.5 rounded text-xs font-medium ${(u as any).suspended ? "bg-red-500/20 text-red-400" : "bg-green-500/20 text-green-400"}`}>
-                {(u as any).suspended ? "Suspended" : "Active"}
-              </span>
-            </div>
-            <div className="flex justify-between"><span className="text-gray-400">Transactions</span><span className="text-white font-medium">{data?.txCount ?? 0}</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">Joined</span><span className="text-white">{fmtDate((u as any).createdAt)}</span></div>
-            <div className="flex justify-between"><span className="text-gray-400">Last seen</span><span className="text-white">{fmtDate((u as any).lastSignedIn)}</span></div>
-          </div>
-
-          {(data?.wallets?.length ?? 0) > 0 && (
-            <div>
-              <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Wallets ({data!.wallets.length})</p>
-              <div className="space-y-2">
-                {data!.wallets.map((w: any) => (
-                  <div key={w.id} className="bg-white/5 rounded-lg p-3 text-xs font-mono text-gray-300 truncate">{w.address}</div>
-                ))}
+          {/* Profile */}
+          <div className="bg-white/5 rounded-xl p-4 space-y-2 text-sm">
+            <p className="text-xs text-gray-400 uppercase tracking-wider font-medium mb-3">Profile</p>
+            {[
+              ["Name",      u.name ?? "—"],
+              ["Email",     u.email ?? "—"],
+              ["Aegis ID",  (u as any).aegisId ?? "—"],
+              ["Role",      u.role ?? "user"],
+              ["KYC",       (u as any).kycStatus ?? "NONE"],
+              ["Joined",    fmtDate(u.createdAt)],
+              ["Last seen", fmtDate((u as any).lastSignedIn)],
+              ["Email verified", (u as any).emailVerified ? "Yes" : "No"],
+              ["Suspended", (u as any).suspended ? "⚠️ YES" : "No"],
+            ].map(([k, v]) => (
+              <div key={k as string} className="flex justify-between gap-4">
+                <span className="text-gray-400 shrink-0">{k}</span>
+                <span className="text-white font-medium text-right break-all">{v as string}</span>
               </div>
+            ))}
+            <div className="flex justify-between">
+              <span className="text-gray-400">Tx count</span>
+              <span className="text-white font-medium">{fmt(data?.txCount)}</span>
             </div>
-          )}
-
-          <div className="space-y-2">
-            <p className="text-xs text-gray-400 uppercase tracking-wider">Send Notification</p>
-            <input value={notifTitle} onChange={e => setNotifTitle(e.target.value)}
-              placeholder="Title" className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5]" />
-            <textarea value={notifBody} onChange={e => setNotifBody(e.target.value)}
-              placeholder="Message body..." rows={3}
-              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5] resize-none" />
-            <button onClick={() => { if (notifTitle && notifBody) notifyUser.mutate({ userId, title: notifTitle, body: notifBody, type: "SYSTEM" }); }}
-              disabled={!notifTitle || !notifBody || notifyUser.isPending}
-              className="w-full py-2 rounded-lg bg-[#5B3CF5] hover:bg-[#4c31d4] text-white text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
-              {notifyUser.isPending ? <Loader2 size={14} className="animate-spin"/> : <Bell size={14}/>} Send Notification
-            </button>
-            {notifyUser.isSuccess && <p className="text-xs text-green-400 text-center">Sent successfully</p>}
           </div>
 
+          {/* Actions */}
           <div className="grid grid-cols-2 gap-2">
-            {(u as any).suspended
-              ? <button onClick={() => unsuspend.mutate({ userId })} disabled={unsuspend.isPending}
-                  className="flex items-center justify-center gap-2 py-2 rounded-lg bg-green-600/20 hover:bg-green-600/30 text-green-400 text-sm font-medium disabled:opacity-40">
-                  {unsuspend.isPending ? <Loader2 size={14} className="animate-spin"/> : <Unlock size={14}/>} Restore
-                </button>
-              : <button onClick={() => suspend.mutate({ userId, reason: "Admin action" })} disabled={suspend.isPending}
-                  className="flex items-center justify-center gap-2 py-2 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-400 text-sm font-medium disabled:opacity-40">
-                  {suspend.isPending ? <Loader2 size={14} className="animate-spin"/> : <Lock size={14}/>} Suspend
-                </button>
-            }
-            {u.kycStatus === "PENDING" && (
+            {(u as any).suspended ? (
+              <button onClick={() => unsuspend.mutate({ userId })} disabled={unsuspend.isPending}
+                className="py-2.5 rounded-xl bg-green-600/20 hover:bg-green-600/30 text-green-400 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
+                {unsuspend.isPending ? <Loader2 size={14} className="animate-spin"/> : <Unlock size={14}/>} Unsuspend
+              </button>
+            ) : (
+              <button onClick={() => suspend.mutate({ userId, reason: "Admin action" })} disabled={suspend.isPending}
+                className="py-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
+                {suspend.isPending ? <Loader2 size={14} className="animate-spin"/> : <Lock size={14}/>} Suspend
+              </button>
+            )}
+            {(u as any).kycStatus === "PENDING" && (
               <>
                 <button onClick={() => approveKyc.mutate({ userId })} disabled={approveKyc.isPending}
-                  className="flex items-center justify-center gap-2 py-2 rounded-lg bg-green-600/20 hover:bg-green-600/30 text-green-400 text-sm font-medium disabled:opacity-40">
-                  {approveKyc.isPending ? <Loader2 size={14} className="animate-spin"/> : <CheckCircle size={14}/>} Approve KYC
+                  className="py-2.5 rounded-xl bg-green-600/20 hover:bg-green-600/30 text-green-400 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
+                  {approveKyc.isPending ? <Loader2 size={14} className="animate-spin"/> : <UserCheck size={14}/>} Approve KYC
                 </button>
                 <button onClick={() => rejectKyc.mutate({ userId, reason: "Failed review" })} disabled={rejectKyc.isPending}
-                  className="flex items-center justify-center gap-2 py-2 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-400 text-sm font-medium disabled:opacity-40">
-                  {rejectKyc.isPending ? <Loader2 size={14} className="animate-spin"/> : <XCircle size={14}/>} Reject KYC
+                  className="py-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
+                  {rejectKyc.isPending ? <Loader2 size={14} className="animate-spin"/> : <UserX size={14}/>} Reject KYC
                 </button>
               </>
             )}
-            <button onClick={() => setRole.mutate({ userId, role: u.role === "admin" ? "user" : "admin" })} disabled={setRole.isPending}
-              className="flex items-center justify-center gap-2 py-2 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 text-sm font-medium disabled:opacity-40 col-span-2">
-              {setRole.isPending ? <Loader2 size={14} className="animate-spin"/> : <Star size={14}/>}
-              {u.role === "admin" ? "Demote to User" : "Promote to Admin"}
-            </button>
-            <button onClick={() => flag.mutate({ userId, reason: "Flagged by admin" })} disabled={flag.isPending}
-              className="flex items-center justify-center gap-2 py-2 rounded-lg bg-yellow-600/20 hover:bg-yellow-600/30 text-yellow-400 text-sm font-medium disabled:opacity-40 col-span-2">
-              {flag.isPending ? <Loader2 size={14} className="animate-spin"/> : <Flag size={14}/>} Flag for Review
+            {u.role !== "admin" ? (
+              <button onClick={() => setRole.mutate({ userId, role: "admin" })} disabled={setRole.isPending}
+                className="py-2.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
+                {setRole.isPending ? <Loader2 size={14} className="animate-spin"/> : <Star size={14}/>} Make Admin
+              </button>
+            ) : (
+              <button onClick={() => setRole.mutate({ userId, role: "user" })} disabled={setRole.isPending}
+                className="py-2.5 rounded-xl bg-gray-600/20 hover:bg-gray-600/30 text-gray-400 text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
+                {setRole.isPending ? <Loader2 size={14} className="animate-spin"/> : <UserX size={14}/>} Remove Admin
+              </button>
+            )}
+            <button onClick={() => setShowFlag(!showFlag)}
+              className="py-2.5 rounded-xl bg-orange-600/20 hover:bg-orange-600/30 text-orange-400 text-sm font-medium flex items-center justify-center gap-2">
+              <Flag size={14}/> Flag User
             </button>
           </div>
 
-          {(data?.auditLogs?.length ?? 0) > 0 && (
-            <div>
-              <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">Audit Log</p>
-              <div className="space-y-1">
-                {data!.auditLogs.slice(0, 6).map((log: any) => (
-                  <div key={log.id} className="flex justify-between text-xs text-gray-400 py-1 border-b border-white/5">
-                    <span className="font-medium text-white">{log.action}</span>
-                    <span>{fmtDate(log.timestamp ?? log.createdAt)}</span>
+          {/* Flag form */}
+          {showFlag && (
+            <div className="space-y-2">
+              <input value={flagReason} onChange={e => setFlagReason(e.target.value)}
+                placeholder="Flag reason (e.g. suspicious activity)"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-orange-500" />
+              <button onClick={() => { flag.mutate({ userId, reason: flagReason }); setShowFlag(false); setFlagReason(""); }}
+                disabled={!flagReason || flag.isPending}
+                className="w-full py-2 rounded-xl bg-orange-600/30 text-orange-400 text-sm font-medium disabled:opacity-40">
+                Confirm Flag
+              </button>
+            </div>
+          )}
+
+          {/* Send notification to user */}
+          <div className="border-t border-white/10 pt-4 space-y-3">
+            <p className="text-xs text-gray-400 uppercase tracking-wider font-medium flex items-center gap-2"><Bell size={12}/> Send Direct Notification</p>
+            <input value={notifTitle} onChange={e => setNotifTitle(e.target.value)} placeholder="Notification title"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5]" />
+            <textarea value={notifBody} onChange={e => setNotifBody(e.target.value)} rows={2} placeholder="Message..."
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5] resize-none" />
+            <button onClick={() => { notifyUser.mutate({ userId, title: notifTitle, body: notifBody, type: "SYSTEM" }); setNotifTitle(""); setNotifBody(""); }}
+              disabled={!notifTitle || !notifBody || notifyUser.isPending}
+              className="w-full py-2.5 rounded-xl bg-[#5B3CF5]/20 hover:bg-[#5B3CF5]/30 text-[#a78bfa] text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
+              {notifyUser.isPending ? <Loader2 size={14} className="animate-spin"/> : <Send size={14}/>}
+              {notifyUser.isSuccess ? "Sent!" : "Send Notification"}
+            </button>
+          </div>
+
+          {/* Audit log */}
+          {(data?.auditLogs ?? []).length > 0 && (
+            <div className="border-t border-white/10 pt-4">
+              <p className="text-xs text-gray-400 uppercase tracking-wider font-medium mb-3 flex items-center gap-2"><Activity size={12}/> Audit Log</p>
+              <div className="space-y-2 max-h-40 overflow-y-auto">
+                {(data?.auditLogs ?? []).map((log: any, i: number) => (
+                  <div key={i} className="bg-white/5 rounded-lg px-3 py-2 text-xs">
+                    <p className="text-white font-medium">{log.action}</p>
+                    <p className="text-gray-500 mt-0.5">{fmtDateTime(log.createdAt)}</p>
                   </div>
                 ))}
               </div>
@@ -176,112 +197,148 @@ function BroadcastPanel() {
   const [body, setBody]           = useState("");
   const [type, setType]           = useState<"BROADCAST" | "PROMO" | "SYSTEM">("BROADCAST");
   const [targetUserId, setTUID]   = useState("");
-  const [actionUrl, setActionUrl] = useState("");
   const utils = trpc.useUtils();
-  const broadcast  = trpc.notify.broadcast.useMutation({ onSuccess: () => { setTitle(""); setBody(""); setActionUrl(""); utils.notify.list.invalidate(); } });
-  const sendToUser = trpc.notify.sendToUser.useMutation({ onSuccess: () => { setTitle(""); setBody(""); setTUID(""); setActionUrl(""); } });
+  const broadcast  = trpc.notify.broadcast.useMutation({ onSuccess: () => { setTitle(""); setBody(""); utils.admin.broadcastHistory.invalidate(); } });
+  const sendToUser = trpc.notify.sendToUser.useMutation({ onSuccess: () => { setTitle(""); setBody(""); setTUID(""); } });
+  const { data: history, isLoading: histLoading } = trpc.admin.broadcastHistory.useQuery({ limit: 20 });
   const isPending = broadcast.isPending || sendToUser.isPending;
-  const isSuccess = broadcast.isSuccess  || sendToUser.isSuccess;
+  const isSuccess = broadcast.isSuccess || sendToUser.isSuccess;
 
   const TYPES = [
-    { value: "BROADCAST" as const, label: "Broadcast", emoji: "📢" },
-    { value: "PROMO"     as const, label: "Promo",     emoji: "🎁" },
-    { value: "SYSTEM"    as const, label: "System",    emoji: "⚙️" },
+    { value: "BROADCAST" as const, label: "Broadcast", emoji: "📢", desc: "General announcement" },
+    { value: "PROMO"     as const, label: "Promo",     emoji: "🎁", desc: "Offer or reward" },
+    { value: "SYSTEM"    as const, label: "System",    emoji: "⚙️", desc: "Platform update" },
   ];
 
   return (
-    <div className="max-w-2xl space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-white mb-1">Broadcast Center</h2>
-        <p className="text-sm text-gray-400">Send in-app notifications. All broadcasts appear in the user notification bell.</p>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        {(["all", "user"] as const).map(m => (
-          <button key={m} onClick={() => setMode(m)}
-            className={`p-4 rounded-xl border text-left transition-all ${mode === m ? "border-[#5B3CF5] bg-[#5B3CF5]/10" : "border-white/10 bg-white/5 hover:border-white/20"}`}>
-            <div className="flex items-center gap-2 mb-1">
-              {m === "all" ? <Users size={16} className={mode === "all" ? "text-[#5B3CF5]" : "text-gray-400"}/> : <Mail size={16} className={mode === "user" ? "text-[#5B3CF5]" : "text-gray-400"}/>}
-              <span className={`text-sm font-medium ${mode === m ? "text-white" : "text-gray-400"}`}>{m === "all" ? "All Users" : "Specific User"}</span>
-            </div>
-            <p className="text-xs text-gray-500">{m === "all" ? "Broadcast to every registered user" : "Target one user by their ID"}</p>
-          </button>
-        ))}
-      </div>
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Compose */}
+        <div className="space-y-5">
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-1">Broadcast Center</h2>
+            <p className="text-sm text-gray-400">Send in-app notifications to users. Shows up in their notification bell instantly.</p>
+          </div>
 
-      {mode === "user" && (
-        <div>
-          <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">User ID</label>
-          <input value={targetUserId} onChange={e => setTUID(e.target.value)} type="number"
-            placeholder="Enter numeric user ID"
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5]" />
-        </div>
-      )}
+          {/* Target */}
+          <div className="grid grid-cols-2 gap-3">
+            {(["all", "user"] as const).map(m => (
+              <button key={m} onClick={() => setMode(m)}
+                className={`p-4 rounded-xl border text-left transition-all ${mode === m ? "border-[#5B3CF5] bg-[#5B3CF5]/10" : "border-white/10 bg-white/5 hover:border-white/20"}`}>
+                <div className="flex items-center gap-2 mb-1">
+                  {m === "all" ? <Users size={16} className={mode === "all" ? "text-[#5B3CF5]" : "text-gray-400"}/> : <Mail size={16} className={mode === "user" ? "text-[#5B3CF5]" : "text-gray-400"}/>}
+                  <span className={`text-sm font-medium ${mode === m ? "text-white" : "text-gray-400"}`}>{m === "all" ? "All Users" : "Specific User"}</span>
+                </div>
+                <p className="text-xs text-gray-500">{m === "all" ? "Every registered user" : "Target by user ID"}</p>
+              </button>
+            ))}
+          </div>
 
-      <div>
-        <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">Message Type</label>
-        <div className="grid grid-cols-3 gap-2">
-          {TYPES.map(t => (
-            <button key={t.value} onClick={() => setType(t.value)}
-              className={`p-3 rounded-xl border text-left transition-all ${type === t.value ? "border-[#5B3CF5] bg-[#5B3CF5]/10" : "border-white/10 bg-white/5 hover:border-white/20"}`}>
-              <p className={`text-xs font-medium ${type === t.value ? "text-white" : "text-gray-400"}`}>{t.emoji} {t.label}</p>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <div>
-          <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">Title</label>
-          <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. New feature launched"
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5]" />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">Message</label>
-          <textarea value={body} onChange={e => setBody(e.target.value)} rows={4}
-            placeholder="Write your message here..."
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5] resize-none" />
-        </div>
-        <div>
-          <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">Action URL (optional)</label>
-          <input value={actionUrl} onChange={e => setActionUrl(e.target.value)}
-            placeholder="https://aegis.cozanet.net/fund"
-            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5]" />
-        </div>
-      </div>
-
-      {(title || body) && (
-        <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-          <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">Preview</p>
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-full bg-[#5B3CF5]/20 flex items-center justify-center shrink-0">
-              <Bell size={18} className="text-[#5B3CF5]"/>
-            </div>
+          {mode === "user" && (
             <div>
-              <p className="text-sm font-semibold text-white">{title || "Title"}</p>
-              <p className="text-xs text-gray-400 mt-0.5">{body || "Message..."}</p>
-              <p className="text-xs text-gray-600 mt-1">Just now · {mode === "all" ? "All users" : `User #${targetUserId}`}</p>
+              <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">User ID</label>
+              <input value={targetUserId} onChange={e => setTUID(e.target.value)} type="number"
+                placeholder="Enter numeric user ID"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5]" />
+            </div>
+          )}
+
+          {/* Type */}
+          <div>
+            <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">Message Type</label>
+            <div className="grid grid-cols-3 gap-2">
+              {TYPES.map(t => (
+                <button key={t.value} onClick={() => setType(t.value)}
+                  className={`p-3 rounded-xl border text-left transition-all ${type === t.value ? "border-[#5B3CF5] bg-[#5B3CF5]/10" : "border-white/10 bg-white/5 hover:border-white/20"}`}>
+                  <p className={`text-xs font-medium ${type === t.value ? "text-white" : "text-gray-400"}`}>{t.emoji} {t.label}</p>
+                  <p className="text-[10px] text-gray-600 mt-0.5">{t.desc}</p>
+                </button>
+              ))}
             </div>
           </div>
-        </div>
-      )}
 
-      <button
-        onClick={() => {
-          if (!title || !body) return;
-          const payload = { title, body, type, ...(actionUrl ? { actionUrl } : {}) };
-          if (mode === "all") broadcast.mutate(payload);
-          else sendToUser.mutate({ ...payload, userId: Number(targetUserId), type: type as any });
-        }}
-        disabled={!title || !body || isPending || (mode === "user" && !targetUserId)}
-        className="w-full py-4 rounded-xl bg-[#5B3CF5] hover:bg-[#4c31d4] text-white font-semibold disabled:opacity-40 flex items-center justify-center gap-2 transition-colors">
-        {isPending ? <Loader2 size={18} className="animate-spin"/> : <Send size={18}/>}
-        {isPending ? "Sending..." : mode === "all" ? "Broadcast to All Users" : "Send to User"}
-      </button>
-      {isSuccess && (
-        <div className="flex items-center gap-2 text-green-400 text-sm justify-center">
-          <CheckCircle size={16}/> Notification sent successfully!
+          {/* Message */}
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">Title</label>
+              <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. New feature available!"
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5]" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 uppercase tracking-wider mb-2">Message Body</label>
+              <textarea value={body} onChange={e => setBody(e.target.value)} rows={4}
+                placeholder="Write your message to users..."
+                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5] resize-none" />
+              <p className="text-xs text-gray-600 mt-1">{body.length}/500 characters</p>
+            </div>
+          </div>
+
+          {/* Preview */}
+          {(title || body) && (
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+              <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">Preview</p>
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-[#5B3CF5]/20 flex items-center justify-center shrink-0">
+                  <Bell size={18} className="text-[#5B3CF5]"/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-white">{title || "Title"}</p>
+                  <p className="text-xs text-gray-400 mt-0.5 break-words">{body || "Message..."}</p>
+                  <p className="text-xs text-gray-600 mt-1">Just now · {TYPES.find(t => t.value === type)?.emoji} {type} · {mode === "all" ? "All users" : `User #${targetUserId}`}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Send */}
+          <button
+            onClick={() => {
+              if (!title || !body) return;
+              const payload = { title, body, type };
+              if (mode === "all") broadcast.mutate(payload);
+              else sendToUser.mutate({ ...payload, userId: Number(targetUserId) });
+            }}
+            disabled={!title || !body || isPending || (mode === "user" && !targetUserId)}
+            className="w-full py-4 rounded-xl bg-[#5B3CF5] hover:bg-[#4c31d4] text-white font-semibold disabled:opacity-40 flex items-center justify-center gap-2 transition-colors">
+            {isPending ? <Loader2 size={18} className="animate-spin"/> : <Megaphone size={18}/>}
+            {isPending ? "Sending..." : mode === "all" ? "📢 Broadcast to All Users" : "Send to User"}
+          </button>
+          {isSuccess && (
+            <div className="flex items-center gap-2 text-green-400 text-sm justify-center bg-green-500/10 rounded-xl py-3">
+              <CheckCircle size={16}/> Notification sent successfully!
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Broadcast History */}
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white mb-1">Broadcast History</h2>
+            <p className="text-sm text-gray-400">Recent messages sent to all users.</p>
+          </div>
+          {histLoading ? (
+            <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-[#5B3CF5]"/></div>
+          ) : (history ?? []).length === 0 ? (
+            <div className="text-center py-12 bg-white/5 rounded-xl border border-white/10">
+              <Megaphone size={32} className="text-gray-600 mx-auto mb-3"/>
+              <p className="text-gray-400 text-sm">No broadcasts yet</p>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+              {(history ?? []).map((n: any) => (
+                <div key={n.id} className="bg-white/5 border border-white/10 rounded-xl p-4">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <p className="text-sm font-semibold text-white">{n.title}</p>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium shrink-0 ${STATUS_COLORS[n.type] ?? "bg-gray-500/20 text-gray-400"}`}>{n.type}</span>
+                  </div>
+                  <p className="text-xs text-gray-400 line-clamp-2">{n.body}</p>
+                  <p className="text-xs text-gray-600 mt-2">{fmtDateTime(n.createdAt)}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -318,7 +375,7 @@ function SupportPanel() {
         </div>
         <p className="text-sm text-gray-300 border-t border-white/10 pt-3">{(detail as any).ticket?.message}</p>
       </div>
-      <div className="space-y-3">
+      <div className="space-y-3 max-h-80 overflow-y-auto">
         {((detail as any).replies ?? []).map((r: any) => (
           <div key={r.id} className={`flex gap-3 ${r.isAdmin ? "flex-row-reverse" : ""}`}>
             <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${r.isAdmin ? "bg-[#5B3CF5] text-white" : "bg-white/10 text-gray-300"}`}>
@@ -326,7 +383,7 @@ function SupportPanel() {
             </div>
             <div className={`rounded-xl px-4 py-3 max-w-sm ${r.isAdmin ? "bg-[#5B3CF5]/10 border border-[#5B3CF5]/20" : "bg-white/5 border border-white/10"}`}>
               <p className="text-sm text-white">{r.message}</p>
-              <p className="text-xs text-gray-500 mt-1">{fmtDate(r.createdAt)}</p>
+              <p className="text-xs text-gray-500 mt-1">{fmtDateTime(r.createdAt)}</p>
             </div>
           </div>
         ))}
@@ -361,7 +418,6 @@ function SupportPanel() {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <span className={`px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[t.status]}`}>{t.status}</span>
-              <span className={`px-2 py-0.5 rounded text-xs font-medium ${t.priority === "HIGH" || t.priority === "CRITICAL" ? "bg-red-500/20 text-red-400" : "bg-gray-500/20 text-gray-400"}`}>{t.priority}</span>
               <ChevronRight size={14} className="text-gray-500"/>
             </div>
           </div>
@@ -371,12 +427,12 @@ function SupportPanel() {
   );
 }
 
-// ── KYC Panel ────────────────────────────────────────────────────────────────
+// ── KYC Panel ──────────────────────────────────────────────────────────────
 function KycPanel() {
   const utils = trpc.useUtils();
   const { data: users, isLoading } = trpc.admin.listUsers.useQuery({ limit: 200, offset: 0 });
   const approveKyc = trpc.admin.approveKyc.useMutation({ onSuccess: () => { utils.admin.listUsers.invalidate(); utils.admin.stats.invalidate(); } });
-  const rejectKyc  = trpc.admin.rejectKyc.useMutation({ onSuccess:  () => { utils.admin.listUsers.invalidate(); utils.admin.stats.invalidate(); } });
+  const rejectKyc  = trpc.admin.rejectKyc.useMutation({ onSuccess: () => { utils.admin.listUsers.invalidate(); utils.admin.stats.invalidate(); } });
   const pending = (users ?? []).filter((u: any) => u.kycStatus === "PENDING");
 
   if (isLoading) return <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-[#5B3CF5]"/></div>;
@@ -402,7 +458,7 @@ function KycPanel() {
               <p className="text-xs text-gray-400">{u.email ?? "No email"} · Joined {fmtDate(u.createdAt)}</p>
             </div>
             <span className={`px-2 py-0.5 rounded text-xs font-medium ${u.emailVerified ? "bg-green-500/20 text-green-400" : "bg-gray-500/20 text-gray-400"}`}>
-              {u.emailVerified ? "Email verified" : "Unverified email"}
+              {u.emailVerified ? "Email ✓" : "Email unverified"}
             </span>
           </div>
           <div className="flex gap-2">
@@ -421,15 +477,21 @@ function KycPanel() {
   );
 }
 
-// ── Settings Panel ────────────────────────────────────────────────────────────
+// ── Settings Panel ─────────────────────────────────────────────────────────
 function SettingsPanel() {
-  const [banner, setBanner] = useState(() => localStorage.getItem("aegis_admin_banner") ?? "");
-  const [maintenanceMode, setMaintenance] = useState(() => localStorage.getItem("aegis_maintenance") === "true");
-  const [saved, setSaved] = useState(false);
+  const [banner, setBanner]           = useState(() => localStorage.getItem("aegis_admin_banner") ?? "");
+  const [maintenanceMode, setMaint]   = useState(() => localStorage.getItem("aegis_maintenance") === "true");
+  const [registrationOpen, setReg]    = useState(() => localStorage.getItem("aegis_registration") !== "false");
+  const [saved, setSaved]             = useState(false);
+  const broadcast = trpc.notify.broadcast.useMutation();
 
   const handleSave = () => {
     localStorage.setItem("aegis_admin_banner", banner);
     localStorage.setItem("aegis_maintenance", String(maintenanceMode));
+    localStorage.setItem("aegis_registration", String(registrationOpen));
+    if (banner) {
+      broadcast.mutate({ title: "📌 Platform Announcement", body: banner, type: "SYSTEM" });
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
   };
@@ -438,224 +500,297 @@ function SettingsPanel() {
     <div className="max-w-lg space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-white mb-1">Platform Settings</h2>
-        <p className="text-sm text-gray-400">These settings affect the entire platform for all users.</p>
+        <p className="text-sm text-gray-400">These settings affect all users platform-wide.</p>
       </div>
+
+      {/* Announcement Banner */}
       <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
-        <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Info size={15}/> Announcement Banner</h3>
+        <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Bell size={15}/> Announcement Banner</h3>
         <textarea value={banner} onChange={e => setBanner(e.target.value)} rows={3}
-          placeholder="e.g. Maintenance scheduled for Sunday 2AM-4AM WAT. Plan ahead."
+          placeholder="e.g. Maintenance scheduled Sunday 2AM–4AM WAT. Plan ahead."
           className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5] resize-none" />
-        <p className="text-xs text-gray-500">Leave empty to hide the banner. Shown to all logged-in users.</p>
+        <p className="text-xs text-gray-500">Saving will also broadcast this as a SYSTEM notification to all users.</p>
       </div>
+
+      {/* Maintenance Mode */}
       <div className="bg-white/5 border border-white/10 rounded-xl p-5 flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-white flex items-center gap-2"><AlertTriangle size={15}/> Maintenance Mode</h3>
-          <p className="text-xs text-gray-400 mt-1">Disables trading and send/receive while on.</p>
+          <p className="text-xs text-gray-400 mt-1">Disables trading, send, and receive while on.</p>
         </div>
-        <button onClick={() => setMaintenance(!maintenanceMode)}
+        <button onClick={() => setMaint(!maintenanceMode)}
           className={`w-12 h-6 rounded-full transition-colors relative ${maintenanceMode ? "bg-red-500" : "bg-white/20"}`}>
           <span className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${maintenanceMode ? "left-6" : "left-0.5"}`}/>
         </button>
       </div>
+
+      {/* Registration Toggle */}
+      <div className="bg-white/5 border border-white/10 rounded-xl p-5 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2"><UserPlus size={15}/> Open Registration</h3>
+          <p className="text-xs text-gray-400 mt-1">Allow new users to sign up.</p>
+        </div>
+        <button onClick={() => setReg(!registrationOpen)}
+          className={`w-12 h-6 rounded-full transition-colors relative ${registrationOpen ? "bg-green-500" : "bg-white/20"}`}>
+          <span className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${registrationOpen ? "left-6" : "left-0.5"}`}/>
+        </button>
+      </div>
+
+      {/* Admin emails info */}
+      <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-2">
+        <h3 className="text-sm font-semibold text-white flex items-center gap-2"><ShieldAlert size={15}/> Admin Access</h3>
+        <p className="text-xs text-gray-400">Admins are set via <code className="bg-white/10 px-1 rounded text-[#a78bfa]">ADMIN_EMAILS</code> environment variable on Vercel, or via the "Make Admin" button in user detail.</p>
+        <p className="text-xs text-gray-500">Current hardcoded admins: info@cozanet.net, fassdavid722@gmail.com</p>
+      </div>
+
       <button onClick={handleSave}
-        className="w-full py-3 rounded-xl bg-[#5B3CF5] hover:bg-[#4c31d4] text-white font-semibold flex items-center justify-center gap-2 transition-colors">
-        {saved ? <><Check size={16}/> Saved</> : <><Settings size={16}/> Save Settings</>}
+        className="w-full py-3.5 rounded-xl bg-[#5B3CF5] hover:bg-[#4c31d4] text-white font-semibold flex items-center justify-center gap-2 transition-colors">
+        {saved ? <><CheckCircle size={16}/> Saved!</> : <><Check size={16}/> Save Settings</>}
       </button>
     </div>
   );
 }
 
-// ── Main AdminConsole ─────────────────────────────────────────────────────────
+// ── Main AdminConsole ──────────────────────────────────────────────────────
 export default function AdminConsole() {
-  const navigate = useNavigate();
-  const { user, isLoading: authLoading, isAdmin } = useCurrentUser();
-  const [tab, setTab]               = useState<Tab>("overview");
-  const [search, setSearch]         = useState("");
-  const [selectedUser, setSelUser]  = useState<number | null>(null);
+  const navigate       = useNavigate();
+  const { isAdmin, isLoading: authLoading } = useCurrentUser();
+  const [tab, setTab]  = useState<Tab>("overview");
+  const [search, setSearch] = useState("");
+  const [selectedUser, setSelectedUser] = useState<number | null>(null);
 
-  const { data: stats, isLoading: statsLoading, refetch } =
-    trpc.admin.stats.useQuery(undefined, { enabled: !!isAdmin });
-  const { data: usersData, isLoading: usersLoading } =
-    trpc.admin.listUsers.useQuery({ limit: 200, offset: 0 }, { enabled: !!isAdmin && (tab === "users" || tab === "overview" || tab === "kyc") });
-  const { data: txData, isLoading: txLoading } =
-    trpc.admin.listTransactions.useQuery({ limit: 100, offset: 0 }, { enabled: !!isAdmin && tab === "transactions" });
+  const utils = trpc.useUtils();
+  const { data: stats, isLoading, refetch } = trpc.admin.stats.useQuery(undefined, { refetchInterval: 60_000 });
+  const { data: allUsers, isLoading: usersLoading } = trpc.admin.listUsers.useQuery({ limit: 100, offset: 0 }, { enabled: tab === "users" });
+  const { data: searchResults } = trpc.admin.searchUsers.useQuery({ q: search }, { enabled: search.length >= 2 });
+  const { data: allTxs, isLoading: txLoading } = trpc.admin.listTransactions.useQuery({ limit: 100, offset: 0 }, { enabled: tab === "transactions" });
 
+  // Guard: only admins can see this page
   if (authLoading) return (
-    <div className="flex items-center justify-center h-screen bg-[#0B0C10]">
-      <Loader2 size={32} className="animate-spin text-[#5B3CF5]"/>
+    <div className="flex items-center justify-center min-h-screen">
+      <Loader2 size={28} className="animate-spin text-[#5B3CF5]"/>
     </div>
   );
-
   if (!isAdmin) return (
-    <div className="flex flex-col items-center justify-center h-screen bg-[#0B0C10] text-center px-4">
-      <Shield size={48} className="text-red-500 mb-4"/>
-      <h1 className="text-xl font-bold text-white mb-2">Access Denied</h1>
-      <p className="text-gray-400 mb-6">This area is restricted to Cozanet administrators only.</p>
-      <button onClick={() => navigate("/")} className="px-6 py-3 rounded-xl bg-[#5B3CF5] hover:bg-[#4c31d4] text-white font-medium transition-colors">Back to Dashboard</button>
+    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center px-4">
+      <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center">
+        <Lock size={28} className="text-red-400"/>
+      </div>
+      <h2 className="text-xl font-semibold text-white">Access Denied</h2>
+      <p className="text-gray-400 max-w-sm">You don't have admin privileges. Contact the platform owner.</p>
+      <button onClick={() => navigate("/")} className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition-colors">
+        Go Home
+      </button>
     </div>
   );
 
-  const TABS: { id: Tab; label: string; icon: any }[] = [
-    { id: "overview",     label: "Overview",     icon: BarChart2  },
-    { id: "users",        label: "Users",        icon: Users      },
-    { id: "kyc",          label: "KYC Queue",    icon: UserCheck  },
-    { id: "transactions", label: "Transactions", icon: Receipt    },
-    { id: "support",      label: "Support",      icon: LifeBuoy   },
-    { id: "broadcast",    label: "Broadcast",    icon: Megaphone  },
-    { id: "settings",     label: "Settings",     icon: Settings   },
-  ];
+  const displayUsers = search.length >= 2 ? (searchResults ?? []) : (allUsers ?? []);
 
-  const filteredUsers = (usersData ?? []).filter((u: any) =>
-    !search || (u.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
-    (u.email ?? "").toLowerCase().includes(search.toLowerCase()) || String(u.id).includes(search)
-  );
-
-  const STAT_CARDS = [
-    { label: "Total Users",  value: fmt(stats?.totalUsers),       icon: Users,    color: "text-[#5B3CF5]", bg: "bg-[#5B3CF5]/10" },
-    { label: "Transactions", value: fmt(stats?.totalTransactions), icon: Receipt,  color: "text-green-400", bg: "bg-green-500/10"  },
-    { label: "Active Today", value: fmt(stats?.activeToday),       icon: Activity, color: "text-blue-400",  bg: "bg-blue-500/10"   },
-    { label: "KYC Pending",  value: fmt(stats?.pendingKyc),        icon: Clock,    color: "text-yellow-400",bg: "bg-yellow-500/10" },
+  const TABS: { id: Tab; label: string; icon: any; badge?: number }[] = [
+    { id: "overview",      label: "Overview",     icon: BarChart2    },
+    { id: "users",         label: "Users",        icon: Users,       badge: stats?.totalUsers },
+    { id: "kyc",           label: "KYC Queue",    icon: Shield,      badge: stats?.pendingKyc },
+    { id: "transactions",  label: "Transactions", icon: Receipt,     badge: stats?.totalTransactions },
+    { id: "support",       label: "Support",      icon: LifeBuoy     },
+    { id: "broadcast",     label: "Broadcast",    icon: Megaphone    },
+    { id: "settings",      label: "Settings",     icon: Settings     },
   ];
 
   return (
-    <div className="min-h-screen bg-[#0B0C10] pb-20 lg:pb-0">
-      {selectedUser && <UserDetail userId={selectedUser} onClose={() => setSelUser(null)}/>}
-
-      <div className="bg-[#111318] border-b border-white/10 px-4 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-[#5B3CF5]/20 flex items-center justify-center">
-            <Shield size={18} className="text-[#5B3CF5]"/>
-          </div>
-          <div>
-            <h1 className="text-base font-bold text-white">Admin Console</h1>
-            <p className="text-xs text-gray-400">Cozanet Platform Operations</p>
-          </div>
+    <div className="min-h-screen text-white">
+      {/* Header */}
+      <div className="px-4 pt-6 pb-4 border-b border-white/10 mb-6">
+        <div className="flex items-center justify-between mb-1">
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-[#5B3CF5]/20 flex items-center justify-center">
+              <Shield size={20} className="text-[#5B3CF5]"/>
+            </div>
+            Admin Console
+          </h1>
+          <button onClick={() => { utils.admin.stats.invalidate(); utils.admin.listUsers.invalidate(); refetch(); }}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white text-sm transition-colors">
+            <RefreshCw size={14}/> Refresh
+          </button>
         </div>
-        <button onClick={() => refetch()} className="p-2 rounded-lg hover:bg-white/5 text-gray-400 hover:text-white transition-colors">
-          <RefreshCw size={16}/>
-        </button>
+        <p className="text-sm text-gray-400">Full platform management — users, KYC, notifications, support</p>
       </div>
 
-      <div className="overflow-x-auto border-b border-white/10 bg-[#111318]">
-        <div className="flex min-w-max px-4">
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-                tab === t.id ? "border-[#5B3CF5] text-[#5B3CF5]" : "border-transparent text-gray-400 hover:text-white"
-              }`}>
-              <t.icon size={14}/> {t.label}
-              {t.id === "kyc" && (stats?.pendingKyc ?? 0) > 0 && (
-                <span className="w-4 h-4 rounded-full bg-yellow-500 text-black text-[10px] font-bold flex items-center justify-center">{stats!.pendingKyc}</span>
-              )}
-            </button>
-          ))}
+      {/* Tabs */}
+      <div className="px-4 mb-6 overflow-x-auto">
+        <div className="flex gap-1 min-w-max">
+          {TABS.map(t => {
+            const Icon = t.icon;
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                  tab === t.id ? "bg-[#5B3CF5] text-white" : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10"
+                }`}>
+                <Icon size={15}/>
+                {t.label}
+                {t.badge !== undefined && t.badge > 0 && (
+                  <span className="min-w-[18px] h-[18px] rounded-full bg-white/20 text-white text-[10px] font-bold flex items-center justify-center px-1">
+                    {t.badge > 999 ? "999+" : t.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      <div className="p-4 max-w-6xl mx-auto">
+      {/* Content */}
+      <div className="px-4 pb-12">
+        {/* Overview */}
         {tab === "overview" && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              {STAT_CARDS.map(s => (
-                <div key={s.label} className="bg-[#111318] border border-white/10 rounded-xl p-4">
-                  <div className={`w-9 h-9 rounded-xl ${s.bg} flex items-center justify-center mb-3`}>
-                    <s.icon size={18} className={s.color}/>
-                  </div>
-                  <p className={`text-2xl font-bold ${statsLoading ? "text-gray-600" : "text-white"}`}>{statsLoading ? "—" : s.value}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
+            {isLoading ? (
+              <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-[#5B3CF5]"/></div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  {[
+                    { label: "Total Users",     value: fmt(stats?.totalUsers),        icon: Users,       color: "text-[#5B3CF5]", bg: "bg-[#5B3CF5]/10" },
+                    { label: "Transactions",    value: fmt(stats?.totalTransactions), icon: Receipt,     color: "text-green-400",  bg: "bg-green-500/10" },
+                    { label: "KYC Pending",     value: fmt(stats?.pendingKyc),        icon: Clock,       color: "text-yellow-400", bg: "bg-yellow-500/10" },
+                    { label: "Active Today",    value: fmt(stats?.activeToday),       icon: Activity,    color: "text-blue-400",   bg: "bg-blue-500/10" },
+                  ].map(card => {
+                    const Icon = card.icon;
+                    return (
+                      <div key={card.label} className="bg-white/5 border border-white/10 rounded-xl p-5">
+                        <div className={`w-9 h-9 rounded-xl ${card.bg} flex items-center justify-center mb-3`}>
+                          <Icon size={18} className={card.color}/>
+                        </div>
+                        <p className="text-2xl font-bold text-white">{card.value}</p>
+                        <p className="text-xs text-gray-400 mt-1">{card.label}</p>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
-            <div className="bg-[#111318] border border-white/10 rounded-xl overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
-                <h2 className="text-sm font-semibold text-white">Recent Users</h2>
-                <button onClick={() => setTab("users")} className="text-xs text-[#5B3CF5] hover:underline flex items-center gap-1">
-                  View all <ChevronRight size={12}/>
-                </button>
+                <div className="bg-white/5 border border-white/10 rounded-xl p-5">
+                  <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2"><TrendingUp size={15}/> Quick Actions</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {[
+                      { label: "Send Broadcast", icon: Megaphone, action: () => setTab("broadcast"), color: "text-[#5B3CF5]" },
+                      { label: "Review KYC",     icon: Shield,    action: () => setTab("kyc"),       color: "text-yellow-400" },
+                      { label: "View Support",   icon: LifeBuoy,  action: () => setTab("support"),   color: "text-blue-400" },
+                      { label: "Manage Users",   icon: Users,     action: () => setTab("users"),     color: "text-green-400" },
+                    ].map(qa => {
+                      const Icon = qa.icon;
+                      return (
+                        <button key={qa.label} onClick={qa.action}
+                          className="p-4 rounded-xl bg-white/5 border border-white/10 hover:border-white/20 flex flex-col items-center gap-2 text-center transition-all group">
+                          <Icon size={20} className={`${qa.color} group-hover:scale-110 transition-transform`}/>
+                          <span className="text-xs text-gray-300 font-medium">{qa.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Users */}
+        {tab === "users" && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1 max-w-sm">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500"/>
+                <input value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="Search by name or email..."
+                  className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5]" />
               </div>
-              {usersLoading
-                ? <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-[#5B3CF5]"/></div>
-                : (usersData ?? []).slice(0, 5).map((u: any) => (
-                    <div key={u.id} onClick={() => setSelUser(u.id)}
-                      className="flex items-center justify-between px-5 py-3 border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors last:border-0">
+              <span className="text-sm text-gray-400 whitespace-nowrap">{displayUsers.length} users</span>
+            </div>
+            {usersLoading ? (
+              <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-[#5B3CF5]"/></div>
+            ) : displayUsers.length === 0 ? (
+              <p className="text-center text-gray-400 py-12">No users found.</p>
+            ) : (
+              <div className="space-y-2">
+                {displayUsers.map((u: any) => (
+                  <button key={u.id} onClick={() => setSelectedUser(u.id)}
+                    className="w-full bg-white/5 border border-white/10 hover:border-[#5B3CF5]/40 rounded-xl p-4 text-left transition-all group">
+                    <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-full bg-[#5B3CF5]/20 flex items-center justify-center text-xs font-bold text-[#5B3CF5] shrink-0">
-                          {(u.name ?? u.email ?? "?").charAt(0).toUpperCase()}
+                        <div className="w-9 h-9 rounded-full bg-[#5B3CF5]/20 flex items-center justify-center shrink-0 text-sm font-bold text-[#a78bfa]">
+                          {(u.name ?? "?")[0].toUpperCase()}
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm text-white truncate">{u.name ?? u.email ?? `User #${u.id}`}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-white truncate">{u.name ?? "Unnamed"}</p>
+                            {u.role === "admin" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 font-medium shrink-0">ADMIN</span>}
+                            {u.suspended && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-medium shrink-0">SUSPENDED</span>}
+                          </div>
                           <p className="text-xs text-gray-400 truncate">{u.email ?? "No email"}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[u.kycStatus ?? "NONE"]}`}>{KYC_LABELS[u.kycStatus ?? "NONE"]}</span>
-                        <ChevronRight size={14} className="text-gray-600"/>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${STATUS_COLORS[u.kycStatus ?? "NONE"]}`}>{u.kycStatus ?? "NONE"}</span>
+                        <ChevronRight size={14} className="text-gray-500 group-hover:text-white transition-colors"/>
                       </div>
                     </div>
-                  ))
-              }
-            </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {tab === "users" && (
-          <div className="space-y-4">
-            <div className="relative">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"/>
-              <input value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Search by name, email or ID..."
-                className="w-full bg-[#111318] border border-white/10 rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-[#5B3CF5]" />
-            </div>
-            <p className="text-xs text-gray-500">{filteredUsers.length} user{filteredUsers.length !== 1 ? "s" : ""}</p>
-            {usersLoading ? <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-[#5B3CF5]"/></div>
-              : filteredUsers.map((u: any) => (
-                <div key={u.id} onClick={() => setSelUser(u.id)}
-                  className="bg-[#111318] border border-white/10 hover:border-white/20 rounded-xl p-4 cursor-pointer transition-all">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-full bg-[#5B3CF5]/20 flex items-center justify-center font-bold text-[#5B3CF5] shrink-0">
-                        {(u.name ?? u.email ?? "?").charAt(0).toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-white truncate">{u.name ?? `User #${u.id}`}</p>
-                        <p className="text-xs text-gray-400 truncate">{u.email ?? "No email"} · Joined {fmtDate(u.createdAt)}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[u.kycStatus ?? "NONE"]}`}>{KYC_LABELS[u.kycStatus ?? "NONE"]}</span>
-                      {(u as any).suspended && <span className="px-2 py-0.5 rounded text-xs font-medium bg-red-500/20 text-red-400">Suspended</span>}
-                      {u.role === "admin" && <span className="px-2 py-0.5 rounded text-xs font-medium bg-purple-500/20 text-purple-400">Admin</span>}
-                      <ChevronRight size={14} className="text-gray-600"/>
-                    </div>
-                  </div>
-                </div>
-              ))
-            }
-          </div>
-        )}
+        {/* KYC */}
+        {tab === "kyc" && <KycPanel/>}
 
-        {tab === "kyc"          && <KycPanel/>}
+        {/* Transactions */}
         {tab === "transactions" && (
           <div className="space-y-3">
-            <h2 className="text-base font-semibold text-white">All Transactions ({txData?.length ?? 0})</h2>
-            {txLoading ? <div className="flex justify-center py-8"><Loader2 size={24} className="animate-spin text-[#5B3CF5]"/></div>
-              : (txData ?? []).map((tx: any) => (
-                <div key={tx.id} className="bg-[#111318] border border-white/10 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[tx.state]}`}>{tx.state}</span>
-                    <span className="text-xs text-gray-400">{fmtDate(tx.createdAt)}</span>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-base font-semibold text-white">All Transactions</h2>
+              <span className="text-xs text-gray-400">{allTxs?.length ?? 0} records</span>
+            </div>
+            {txLoading ? (
+              <div className="flex justify-center py-12"><Loader2 size={24} className="animate-spin text-[#5B3CF5]"/></div>
+            ) : (allTxs?.length ?? 0) === 0 ? (
+              <p className="text-center text-gray-400 py-12">No transactions yet.</p>
+            ) : (
+              <div className="space-y-2">
+                {(allTxs ?? []).map((tx: any) => (
+                  <div key={tx.id} className="bg-white/5 border border-white/10 rounded-xl p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-sm font-medium text-white">{tx.type ?? "Transfer"}</p>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${STATUS_COLORS[tx.state ?? "PENDING"]}`}>{tx.state ?? "PENDING"}</span>
+                        </div>
+                        <p className="text-xs text-gray-400">User #{tx.userId} · {fmtDateTime(tx.createdAt)}</p>
+                        {tx.fromCurrency && <p className="text-xs text-gray-500 mt-0.5">{tx.fromCurrency} → {tx.toCurrency}</p>}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-semibold text-white">{tx.amountRaw ? Number(tx.amountRaw).toLocaleString() : "—"}</p>
+                        <p className="text-xs text-gray-500">#{tx.id}</p>
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-sm text-white font-medium font-mono truncate">{tx.txHash ?? tx.referenceId}</p>
-                  <p className="text-xs text-gray-400 mt-1">User #{tx.userId} · Chain {tx.chainId}</p>
-                </div>
-              ))
-            }
+                ))}
+              </div>
+            )}
           </div>
         )}
-        {tab === "support"   && <SupportPanel/>}
+
+        {/* Support */}
+        {tab === "support" && <SupportPanel/>}
+
+        {/* Broadcast */}
         {tab === "broadcast" && <BroadcastPanel/>}
-        {tab === "settings"  && <SettingsPanel/>}
+
+        {/* Settings */}
+        {tab === "settings" && <SettingsPanel/>}
       </div>
+
+      {/* User Detail Modal */}
+      {selectedUser !== null && (
+        <UserDetail userId={selectedUser} onClose={() => setSelectedUser(null)}/>
+      )}
     </div>
   );
 }
