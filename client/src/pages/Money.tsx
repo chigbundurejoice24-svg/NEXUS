@@ -18,7 +18,7 @@ import {
   Send, Download, PlusCircle, ArrowUpDown,
   ChevronDown, AlertCircle, Check, ArrowRight, Loader2,
   ShieldCheck, AlertTriangle, Zap, Search, Building2,
-  Hash, User, Wallet2, Copy, Share2, Wallet,
+  Hash, User, Coins, Copy, Share2, Wallet,
   ExternalLink, RefreshCw, Info, Star, Clock,
   CheckCheck, Shield, XCircle,
 } from "lucide-react";
