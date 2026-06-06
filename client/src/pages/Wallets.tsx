@@ -1,19 +1,21 @@
 /**
  * Wallets.tsx — Wallet management page
- * - Shows embedded (auto-generated) Aegis wallet at top
- * - Shows all connected external wallets
- * - Live balance per wallet with loading indicator
+ * - Shows embedded Aegis wallet at top
+ * - Shows all connected external wallets with live balances
+ * - "Transfer" button opens WalletTransferModal (EIP-6963 multi-wallet)
+ * - "Add Wallet" → manual address entry (unchanged)
  */
 import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Eye, EyeOff, Plus, Send, Download, Wallet,
-  Trash2, PencilLine, Check, X, Loader2, Shield, Copy,
+  Trash2, PencilLine, Check, X, Loader2, Shield, Copy, ArrowLeftRight,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useWalletStore } from "@/hooks/useWalletStore";
 import { useCurrentUser } from "@/hooks/useAuth";
 import { useNgnRate } from "@/hooks/useNgnRate";
+import WalletTransferModal from "@/components/WalletTransferModal";
 
 const NETWORK_LABELS: Record<string, string> = {
   ethereum: "Ethereum", bsc: "BNB Chain", polygon: "Polygon", arbitrum: "Arbitrum",
@@ -31,12 +33,13 @@ export default function Wallets() {
   const { wallets, totalUsd, add, remove, rename } = useWalletStore();
   const { rate: NGN_PER_USD } = useNgnRate();
 
-  const [showBalances, setShowBalances] = useState(true);
-  const [addingWallet, setAddingWallet] = useState(false);
-  const [error, setError]               = useState<string | null>(null);
-  const [editingId, setEditingId]       = useState<string | null>(null);
-  const [editLabel, setEditLabel]       = useState("");
-  const [copiedAddr, setCopiedAddr]     = useState<string | null>(null);
+  const [showBalances,   setShowBalances]   = useState(true);
+  const [addingWallet,   setAddingWallet]   = useState(false);
+  const [showTransfer,   setShowTransfer]   = useState(false);
+  const [error,          setError]          = useState<string | null>(null);
+  const [editingId,      setEditingId]      = useState<string | null>(null);
+  const [editLabel,      setEditLabel]      = useState("");
+  const [copiedAddr,     setCopiedAddr]     = useState<string | null>(null);
 
   const addressRef = useRef<HTMLInputElement>(null);
   const labelRef   = useRef<HTMLInputElement>(null);
@@ -62,8 +65,22 @@ export default function Wallets() {
     if (labelRef.current)   labelRef.current.value   = "";
   }
 
+  // Map wallets for modal
+  const walletsForModal = wallets.map(w => ({ id: w.id, address: w.address, label: w.label }));
+
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
+      {/* Transfer Modal */}
+      <AnimatePresence>
+        {showTransfer && (
+          <WalletTransferModal
+            onClose={() => setShowTransfer(false)}
+            myWallets={walletsForModal}
+            embeddedAddress={embeddedAddress}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
@@ -102,6 +119,10 @@ export default function Wallets() {
             className="flex items-center gap-1.5 px-4 py-2 bg-white/15 hover:bg-white/25 rounded-xl text-sm font-medium transition-colors">
             <Download size={14}/> Receive
           </button>
+          <button onClick={() => setShowTransfer(true)}
+            className="flex items-center gap-1.5 px-4 py-2 bg-white/15 hover:bg-white/25 rounded-xl text-sm font-medium transition-colors">
+            <ArrowLeftRight size={14}/> Transfer
+          </button>
         </div>
       </motion.div>
 
@@ -111,9 +132,10 @@ export default function Wallets() {
           <motion.div initial={{opacity:0,height:0}} animate={{opacity:1,height:"auto"}} exit={{opacity:0,height:0}}
             className="bg-card border border-border rounded-2xl p-5 space-y-3 overflow-hidden">
             <h3 className="text-sm font-semibold text-aegis-primary-dark dark:text-white">Connect External Wallet</h3>
+            <p className="text-xs text-aegis-tertiary-dark">Paste any EVM wallet address (MetaMask, Trust Wallet, OKX, Coinbase, etc.)</p>
             <input ref={addressRef} placeholder="0x... wallet address"
               className="w-full px-3 py-2.5 rounded-xl bg-aegis-bg-elevated border border-border text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#5B3CF5]/50 dark:text-white" />
-            <input ref={labelRef} placeholder="Label (e.g. Hot Wallet)"
+            <input ref={labelRef} placeholder="Label (e.g. MetaMask Hot Wallet)"
               className="w-full px-3 py-2.5 rounded-xl bg-aegis-bg-elevated border border-border text-sm focus:outline-none focus:ring-2 focus:ring-[#5B3CF5]/50 dark:text-white" />
             {error && <p className="text-xs text-red-400 flex items-center gap-1"><X size={12}/>{error}</p>}
             <div className="flex gap-2">
@@ -130,7 +152,7 @@ export default function Wallets() {
         )}
       </AnimatePresence>
 
-      {/* ── Embedded (Auto) Aegis Wallet ── */}
+      {/* ── Embedded Aegis Wallet ── */}
       {embeddedAddress && (
         <div>
           <p className="text-xs font-semibold text-aegis-tertiary-dark uppercase tracking-wider mb-2">Aegis Wallet</p>
@@ -152,6 +174,10 @@ export default function Wallets() {
                 {copiedAddr === embeddedAddress ? <Check size={13} className="text-green-400"/> : <Copy size={13} className="text-aegis-tertiary-dark"/>}
               </button>
             </div>
+            <button onClick={() => setShowTransfer(true)}
+              className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 border border-[#5B3CF5]/30 rounded-xl text-xs text-[#5B3CF5] hover:bg-[#5B3CF5]/10 transition-colors font-medium">
+              <ArrowLeftRight size={12}/> Transfer to/from this wallet
+            </button>
           </motion.div>
         </div>
       )}
@@ -167,7 +193,7 @@ export default function Wallets() {
             </div>
             <div className="text-center">
               <p className="text-sm font-semibold text-aegis-primary-dark dark:text-white">No external wallets</p>
-              <p className="text-xs text-aegis-tertiary-dark mt-0.5">Add a MetaMask, Trust Wallet, or any EVM address</p>
+              <p className="text-xs text-aegis-tertiary-dark mt-0.5">Add MetaMask, Trust Wallet, OKX, Coinbase, or any EVM address</p>
             </div>
           </motion.button>
         ) : (
@@ -196,38 +222,15 @@ export default function Wallets() {
                     <button onClick={() => { setEditingId(w.id); setEditLabel(w.label); }} className="p-1.5 rounded-lg hover:bg-aegis-bg-elevated transition-colors">
                       <PencilLine size={14} className="text-aegis-tertiary-dark"/>
                     </button>
+                    <button onClick={() => setShowTransfer(true)}
+                      className="p-1.5 rounded-lg hover:bg-[#5B3CF5]/10 transition-colors" title="Transfer from this wallet">
+                      <ArrowLeftRight size={14} className="text-[#5B3CF5]"/>
+                    </button>
                     <button onClick={() => remove(w.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 transition-colors">
                       <Trash2 size={14} className="text-red-400"/>
                     </button>
                   </div>
                 </div>
-
-                {/* Balance + assets */}
-                {w.loading ? (
-                  <div className="flex items-center gap-2 text-xs text-aegis-tertiary-dark">
-                    <Loader2 size={12} className="animate-spin"/> Fetching balance...
-                  </div>
-                ) : w.error ? (
-                  <p className="text-xs text-red-400">⚠ {w.error}</p>
-                ) : (
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-lg font-semibold text-aegis-primary-dark dark:text-white">
-                        {showBalances ? `$${w.balanceUsd.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}` : "••••••"}
-                      </p>
-                      {w.assets.length === 0 && <p className="text-xs text-aegis-tertiary-dark">No assets found</p>}
-                    </div>
-                    {w.assets.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-2">
-                        {w.assets.map((a, j) => (
-                          <span key={j} className={`text-xs px-2 py-0.5 rounded-full font-medium ${NETWORK_COLORS[a.network] ?? "bg-gray-500/20 text-gray-400"}`}>
-                            {showBalances ? `${a.balance} ${a.symbol}` : `•• ${a.symbol}`} · {NETWORK_LABELS[a.network] ?? a.network}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
               </motion.div>
             ))}
           </div>
