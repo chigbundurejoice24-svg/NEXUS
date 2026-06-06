@@ -8,7 +8,7 @@ import { useCurrentUser } from "@/hooks/useAuth";
 const BASE_NAV = [
   { id: "dashboard",    label: "Dashboard",     icon: LayoutDashboard, href: "/" },
   { id: "wallets",      label: "Wallets",        icon: Wallet,          href: "/wallets" },
-  { id: "money",        label: "Money",          icon: Wallet2,        href: "/money" },
+  { id: "money",        label: "Money",          icon: Coins,           href: "/money" },
   { id: "transactions", label: "Transactions",   icon: Receipt,         href: "/transactions" },
   { id: "rates",        label: "Rates",          icon: TrendingUp,      href: "/rates" },
   { id: "ai",           label: "Aegis AI",       icon: Sparkles,        href: "/ai" },
@@ -17,8 +17,7 @@ const BASE_NAV = [
   { id: "api",          label: "Developer API",  icon: Code,            href: "/api",   badge: "Coming Soon" },
 ];
 
-// Admin-only item — imported dynamically so it never appears in source bundles
-// served to non-admin users (tree-shaken at runtime via conditional render)
+// Admin-only item — injected only when server confirms isAdmin
 const ADMIN_NAV = { id: "admin", label: "Admin Console", icon: Code, href: "/admin" };
 
 interface SidebarProps {
@@ -54,7 +53,7 @@ export default function Sidebar({
     ? [...BASE_NAV, ADMIN_NAV]
     : BASE_NAV;
 
-  // Display name from real user data — never from mockData
+  // Display name from real user data
   const displayName = user?.name ?? "Anonymous";
 
   return (
@@ -97,7 +96,7 @@ export default function Sidebar({
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-aegis-primary-dark dark:text-white truncate">{displayName}</p>
               <p className="text-[10px] text-aegis-tertiary-dark truncate">
-                Cozanet Token (CZN) &nbsp;·&nbsp;
+                Cozanet Token (CZN) &nbsp;&middot;&nbsp;
                 {cznLoading
                   ? "loading…"
                   : priceUsd > 0 ? `$${priceUsd.toFixed(4)}` : "—"}
