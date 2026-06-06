@@ -144,6 +144,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `ALTER TABLE account_audit_logs ADD COLUMN IF NOT EXISTS metadata JSONB`,
     `ALTER TABLE account_audit_logs ADD COLUMN IF NOT EXISTS ip_address VARCHAR(45)`,
     `ALTER TABLE account_audit_logs ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()`,
+
+    // ── Wallet security columns (migration 0004) ──────────────────
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS credential_hash VARCHAR(64)`,
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_address VARCHAR(42)`,
+    `ALTER TABLE linked_wallets ADD COLUMN IF NOT EXISTS wallet_anchor VARCHAR(64)`,
+
+    // ── Aegis permanent user ID ───────────────────────────────────
+    `ALTER TABLE users ADD COLUMN IF NOT EXISTS aegis_id VARCHAR(12) UNIQUE`,
+
+    // ── Wallet registry vault (email-locked, recovery layer 4) ────
+    `CREATE TABLE IF NOT EXISTS wallet_registry (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      email VARCHAR(320) NOT NULL,
+      wallet_address VARCHAR(42) NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      UNIQUE (email)
+    )`,
+
+    // ── Referrals ─────────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS referrals (
+      id SERIAL PRIMARY KEY,
+      referrer_id INTEGER NOT NULL REFERENCES users(id),
+      referred_id INTEGER NOT NULL REFERENCES users(id),
+      code VARCHAR(32) NOT NULL UNIQUE,
+      rewarded BOOLEAN NOT NULL DEFAULT false,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )`,
+
+    // ── User preferences ─────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS user_preferences (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      currency VARCHAR(10) NOT NULL DEFAULT 'NGN',
+      theme VARCHAR(20) NOT NULL DEFAULT 'dark',
+      notifications_enabled BOOLEAN NOT NULL DEFAULT true,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )`,
   ];
 
   try {
@@ -164,3 +201,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: e.message });
   }
 }
+
