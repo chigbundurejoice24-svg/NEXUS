@@ -6,6 +6,7 @@
 import { getDb } from "../../db";
 import { linkedWallets } from "../../../drizzle/schema";
 import { eq } from "drizzle-orm";
+import { getLiveFiatRates } from './fx-rate';
 
 export interface OnRampProvider {
   name: string;
@@ -107,7 +108,6 @@ export class OnRampService {
     cryptoCurrency: string;
   }): Promise<{ id: string; provider: string; url: string; fee: string; time: string; recommended?: boolean; color: string; estimatedCrypto: string }[]> {
     const walletAddress = await OnRampService._getWallet(params.userId);
-    const { getLiveFiatRates } = require("../fx-rate");
     const fxRates = await getLiveFiatRates();
     const fxRate = 1 / (fxRates[params.fiatCurrency?.toUpperCase() ?? "NGN"] ?? 1595);
     const estimatedUsdt = (params.fiatAmount * fxRate * 0.98).toFixed(2);
