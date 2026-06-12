@@ -1,483 +1,410 @@
 /**
- * Auth.tsx — Login & Sign-Up with legal consent gate
- * Flow: country → choice → register → LEGAL CONSENT → email → verify → dashboard
+ * Auth.tsx — NEXUS v2 Auth
+ * Email-first OTP auth. Works on ALL devices — no passkeys, no biometrics.
+ * Flow: Landing → Enter Email → OTP → Done
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Shield, Fingerprint, Globe, ChevronDown, Loader2,
-  AlertCircle, Sparkles, Mail, CheckCircle2, RefreshCw,
-  FileText, Check, ExternalLink,
+  ArrowRight, Mail, Loader2, AlertCircle, CheckCircle2,
+  RefreshCw, Shield, Zap, Globe, Lock, ChevronLeft, Sparkles
 } from "lucide-react";
 import { trpc, setToken } from "@/lib/trpc";
 import { queryClient } from "@/lib/queryClient";
-import { CONSENT_ITEMS } from "@/lib/legal-policies";
 
-const CONSENT_STORAGE_KEY = "aegis_legal_consent_v1";
-
-const COUNTRIES = [
-  { name: "Nigeria",      code: "NG", flag: "🇳🇬", currency: "NGN" },
-  { name: "Ghana",        code: "GH", flag: "🇬🇭", currency: "GHS" },
-  { name: "Kenya",        code: "KE", flag: "🇰🇪", currency: "KES" },
-  { name: "South Africa", code: "ZA", flag: "🇿🇦", currency: "ZAR" },
-  { name: "Tanzania",     code: "TZ", flag: "🇹🇿", currency: "TZS" },
-  { name: "Uganda",       code: "UG", flag: "🇺🇬", currency: "UGX" },
-  { name: "Senegal",      code: "SN", flag: "🇸🇳", currency: "XOF" },
-  { name: "Cameroon",     code: "CM", flag: "🇨🇲", currency: "XAF" },
-];
-
-type Step = "country" | "choice" | "register" | "legal" | "login" | "email" | "verify";
-
-// 6-digit OTP input
-function OtpInput({ onComplete }: { onComplete: (code: string) => void }) {
+// ── OTP 6-box input ────────────────────────────────────────────────────────
+function OtpInput({ onComplete, disabled }: { onComplete: (code: string) => void; disabled?: boolean }) {
   const [digits, setDigits] = useState(["","","","","",""]);
-  // Fixed: useRef must not be called inside an array literal (Rules of Hooks)
-  const ref0 = useRef<HTMLInputElement>(null);
-  const ref1 = useRef<HTMLInputElement>(null);
-  const ref2 = useRef<HTMLInputElement>(null);
-  const ref3 = useRef<HTMLInputElement>(null);
-  const ref4 = useRef<HTMLInputElement>(null);
-  const ref5 = useRef<HTMLInputElement>(null);
-  const refs = [ref0, ref1, ref2, ref3, ref4, ref5];
+  const r0 = useRef<HTMLInputElement>(null);
+  const r1 = useRef<HTMLInputElement>(null);
+  const r2 = useRef<HTMLInputElement>(null);
+  const r3 = useRef<HTMLInputElement>(null);
+  const r4 = useRef<HTMLInputElement>(null);
+  const r5 = useRef<HTMLInputElement>(null);
+  const refs = [r0,r1,r2,r3,r4,r5];
 
   function handleChange(i: number, val: string) {
-    const digit = val.replace(/\D/g, "").slice(-1);
-    const next = [...digits];
-    next[i] = digit;
-    setDigits(next);
-    if (digit && i < 5) refs[i + 1]?.current?.focus();
+    const digit = val.replace(/\D/g,"").slice(-1);
+    const next = [...digits]; next[i] = digit; setDigits(next);
+    if (digit && i < 5) refs[i+1]?.current?.focus();
     if (next.every(d => d)) onComplete(next.join(""));
   }
   function handleKeyDown(i: number, e: React.KeyboardEvent) {
-    if (e.key === "Backspace" && !digits[i] && i > 0) refs[i - 1]?.current?.focus();
+    if (e.key === "Backspace" && !digits[i] && i > 0) {
+      refs[i-1]?.current?.focus();
+      const next = [...digits]; next[i-1] = ""; setDigits(next);
+    }
   }
   function handlePaste(e: React.ClipboardEvent) {
-    const text = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    const text = e.clipboardData.getData("text").replace(/\D/g,"").slice(0,6);
     if (text.length === 6) { setDigits(text.split("")); onComplete(text); }
+    e.preventDefault();
   }
 
+  useEffect(() => { r0.current?.focus(); }, []);
+
   return (
-    <div className="flex gap-2 justify-center my-4" onPaste={handlePaste}>
+    <div className="flex gap-2.5 justify-center" onPaste={handlePaste}>
       {digits.map((d, i) => (
-        <input key={i} ref={refs[i]} type="text" inputMode="numeric" maxLength={1} value={d} autoFocus={i === 0}
-          onChange={(e) => handleChange(i, e.target.value)}
-          onKeyDown={(e) => handleKeyDown(i, e)}
-          className="w-11 h-14 text-center text-xl font-bold rounded-xl border-2 border-border bg-aegis-bg-elevated text-aegis-primary-dark dark:text-white focus:outline-none focus:border-aegis-accent-purple transition-colors" />
+        <input
+          key={i} ref={refs[i]}
+          type="text" inputMode="numeric" maxLength={1} value={d} disabled={disabled}
+          onChange={e => handleChange(i, e.target.value)}
+          onKeyDown={e => handleKeyDown(i, e)}
+          className={`w-12 h-14 text-center text-2xl font-bold rounded-2xl border-2 transition-all outline-none
+            ${d ? "border-violet-500 bg-violet-500/10 text-violet-400 dark:text-violet-300" : "border-white/20 bg-white/5 text-white"}
+            focus:border-violet-400 focus:bg-violet-500/10 disabled:opacity-50`}
+        />
       ))}
     </div>
   );
 }
 
+// ── Animated feature pill ──────────────────────────────────────────────────
+function FeaturePill({ icon, text }: { icon: React.ReactNode; text: string }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full text-white/80 text-xs font-medium">
+      {icon} {text}
+    </div>
+  );
+}
+
+type Step = "landing" | "email" | "otp" | "name";
+
 export default function Auth() {
   const navigate = useNavigate();
-  const [step, setStep]           = useState<Step>("country");
-  const [country, setCountry]     = useState(COUNTRIES[0]);
-  const [showDrop, setShowDrop]   = useState(false);
-  const [displayName, setName]    = useState("");
-  const [email, setEmail]         = useState("");
-  const [error, setError]         = useState("");
-  const [loading, setLoading]     = useState(false);
-  const [resendTimer, setResendTimer] = useState(0);
-  // Legal consent state — all unchecked initially
-  const [consented, setConsented] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(CONSENT_ITEMS.map(item => [item.id, false]))
-  );
+  const [step, setStep]       = useState<Step>("landing");
+  const [email, setEmail]     = useState("");
+  const [name, setName]       = useState("");
+  const [error, setError]     = useState("");
+  const [loading, setLoading] = useState(false);
+  const [countdown, setCount] = useState(0);
+  const [isNew, setIsNew]     = useState(false);
 
-  const registerMutation    = trpc.auth.register.useMutation();
-  const loginMutation       = trpc.auth.login.useMutation();
+  // tRPC mutations
   const sendCodeMutation    = trpc.auth.sendVerificationCode.useMutation();
   const verifyEmailMutation = trpc.auth.verifyEmail.useMutation();
+  const registerMutation    = trpc.auth.register.useMutation();
 
   useEffect(() => {
-    const saved = localStorage.getItem("aegis_country");
-    if (saved) {
-      const found = COUNTRIES.find(c => c.code === saved);
-      if (found) { setCountry(found); setStep("choice"); }
+    if (countdown <= 0) return;
+    const t = setTimeout(() => setCount(c => c-1), 1000);
+    return () => clearTimeout(t);
+  }, [countdown]);
+
+  // ── Step 1: send OTP ────────────────────────────────────────────────────
+  async function handleSendOtp() {
+    const e = email.trim().toLowerCase();
+    if (!e || !e.includes("@") || !e.includes(".")) {
+      setError("Enter a valid email address"); return;
     }
-  }, []);
-
-  useEffect(() => {
-    if (resendTimer <= 0) return;
-    const id = setTimeout(() => setResendTimer(t => t - 1), 1000);
-    return () => clearTimeout(id);
-  }, [resendTimer]);
-
-  const allConsented = CONSENT_ITEMS.filter(i => i.required).every(i => consented[i.id]);
-
-  function acceptAll() {
-    setConsented(Object.fromEntries(CONSENT_ITEMS.map(item => [item.id, true])));
+    setError(""); setLoading(true);
+    try {
+      const res = await sendCodeMutation.mutateAsync({ email: e });
+      setIsNew(!!(res as any)?.isNewUser);
+      setStep("otp");
+      setCount(60);
+    } catch (err: any) {
+      setError(err?.message ?? "Failed to send code. Check your email and try again.");
+    } finally { setLoading(false); }
   }
 
-  function saveConsentRecord() {
-    localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify({
-      timestamp: new Date().toISOString(),
-      version: "v1-june-2026",
-      items: CONSENT_ITEMS.map(i => ({ id: i.id, accepted: true })),
-    }));
-  }
-
-  const handleCountrySelect = (c: typeof COUNTRIES[0]) => {
-    setCountry(c); setShowDrop(false);
-    localStorage.setItem("aegis_country", c.code);
-    localStorage.setItem("aegis_currency", c.currency);
-  };
-
-  const handleRegister = async () => {
-    if (!displayName.trim()) { setError("Please enter your name"); return; }
+  // ── Step 2: verify OTP ──────────────────────────────────────────────────
+  async function handleVerifyOtp(code: string) {
+    if (loading) return;
     setError(""); setLoading(true);
     try {
-      const userId     = crypto.getRandomValues(new Uint8Array(16));
-      const name       = displayName.trim();
-      const credential = await navigator.credentials.create({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          rp: { name: "NEXUS", id: window.location.hostname },
-          user: { id: userId, name, displayName: name },
-          pubKeyCredParams: [{ alg: -7, type: "public-key" }, { alg: -257, type: "public-key" }],
-          authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "preferred", residentKey: "preferred" },
-          timeout: 60_000,
-        },
-      }) as PublicKeyCredential | null;
-      if (!credential) throw new Error("Passkey creation cancelled");
-      const response     = credential.response as AuthenticatorAttestationResponse;
-      const credentialId = btoa(String.fromCharCode(...new Uint8Array(credential.rawId)));
-      const publicKey    = btoa(String.fromCharCode(...new Uint8Array(response.getPublicKey?.() ?? new ArrayBuffer(0))));
-      const result       = await registerMutation.mutateAsync({ credentialId, publicKey, displayName: name });
-      setToken(result.token);
-      // After passkey creation, show legal consent
-      setStep("legal");
-    } catch (e: any) {
-      setError(e.message?.includes("already") ? "This device is already registered. Try logging in." : e.message ?? "Registration failed");
-    } finally { setLoading(false); }
-  };
-
-  const handleLogin = async () => {
-    setError(""); setLoading(true);
-    try {
-      const assertion = await navigator.credentials.get({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          rpId: window.location.hostname,
-          userVerification: "preferred",
-          timeout: 60_000,
-        },
-      }) as PublicKeyCredential | null;
-      if (!assertion) throw new Error("No passkey selected");
-      const credentialId = btoa(String.fromCharCode(...new Uint8Array(assertion.rawId)));
-      const result       = await loginMutation.mutateAsync({ credentialId });
-      setToken(result.token);
-      // Clear stale cache so auth.me refires fresh with new JWT
-      queryClient.clear();
-      navigate("/");
-    } catch (e: any) {
-      setError(e.message?.includes("NOT_FOUND") || e.message?.includes("not registered")
-        ? "Passkey not found. Create an account first."
-        : e.message ?? "Login failed");
-    } finally { setLoading(false); }
-  };
-
-  const handleConsentContinue = () => {
-    if (!allConsented) return;
-    saveConsentRecord();
-    setStep("email");
-  };
-
-  const handleSendCode = async () => {
-    if (!email.trim() || !email.includes("@")) { setError("Enter a valid email address"); return; }
-    setError(""); setLoading(true);
-    try {
-      await sendCodeMutation.mutateAsync({ email: email.trim() });
-      setStep("verify");
-      setResendTimer(60);
-    } catch (e: any) {
-      setError(e.message ?? "Failed to send code");
-    } finally { setLoading(false); }
-  };
-
-  const handleVerifyCode = async (code: string) => {
-    setError(""); setLoading(true);
-    try {
-      await verifyEmailMutation.mutateAsync({ code });
-      navigate("/");
-    } catch (e: any) {
-      setError(e.message ?? "Invalid code — try again");
+      const res: any = await verifyEmailMutation.mutateAsync({ code });
+      if (res?.token) {
+        setToken(res.token);
+        queryClient.clear();
+      }
+      if (isNew) {
+        setStep("name");
+        setLoading(false);
+      } else {
+        navigate("/");
+      }
+    } catch (err: any) {
+      setError(err?.message ?? "Wrong code — check your email and try again.");
       setLoading(false);
     }
-  };
+  }
 
-  const handleResend = async () => {
-    if (resendTimer > 0 || !email) return;
+  // ── Step 3: set display name (new users only) ───────────────────────────
+  async function handleSetName() {
+    if (!name.trim()) { setError("Enter your name"); return; }
     setError(""); setLoading(true);
     try {
-      await sendCodeMutation.mutateAsync({ email });
-      setResendTimer(60);
-    } catch (e: any) {
-      setError(e.message ?? "Failed to resend");
+      // Use email prefix as credentialId for the register mutation
+      const credentialId = btoa(email.trim().toLowerCase());
+      const publicKey = btoa("email_auth");
+      await registerMutation.mutateAsync({
+        credentialId,
+        publicKey,
+        displayName: name.trim(),
+      });
+      navigate("/");
+    } catch (err: any) {
+      // If already registered, just navigate
+      navigate("/");
     } finally { setLoading(false); }
-  };
+  }
+
+  // ── Resend ──────────────────────────────────────────────────────────────
+  async function handleResend() {
+    if (countdown > 0) return;
+    setError(""); setLoading(true);
+    try {
+      await sendCodeMutation.mutateAsync({ email: email.trim().toLowerCase() });
+      setCount(60);
+    } catch (err: any) {
+      setError(err?.message ?? "Failed to resend");
+    } finally { setLoading(false); }
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#5B3CF5] via-[#6B4CF5] to-[#3B5BDB] flex items-center justify-center p-4">
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Shield size={32} className="text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-white">NEXUS</h1>
-          <p className="text-white/70 text-sm mt-1">Move value across Africa instantly</p>
-        </div>
+    <div className="min-h-screen bg-[#0D0E16] flex flex-col">
+      {/* Gradient background blobs */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-32 -left-32 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl" />
+        <div className="absolute top-1/3 -right-32 w-80 h-80 bg-blue-600/15 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 left-1/4 w-64 h-64 bg-indigo-600/10 rounded-full blur-3xl" />
+      </div>
 
-        <div className="bg-white dark:bg-gray-900 rounded-3xl p-8 shadow-2xl">
-          <AnimatePresence mode="wait">
+      <div className="relative flex-1 flex flex-col items-center justify-center p-6">
+        <AnimatePresence mode="wait">
 
-            {/* STEP 1: Country */}
-            {step === "country" && (
-              <motion.div key="country" initial={{ opacity:0,x:20 }} animate={{ opacity:1,x:0 }} exit={{ opacity:0,x:-20 }}>
-                <div className="flex items-center gap-2 mb-2">
-                  <Globe size={20} className="text-aegis-accent-purple" />
-                  <h2 className="text-xl font-semibold text-aegis-primary-dark dark:text-white">Select your country</h2>
+          {/* ── LANDING ── */}
+          {step === "landing" && (
+            <motion.div
+              key="landing"
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.4, ease: "easeOut" }}
+              className="w-full max-w-sm text-center space-y-8"
+            >
+              {/* Logo */}
+              <div className="space-y-4">
+                <div className="relative inline-block">
+                  <div className="w-20 h-20 bg-gradient-to-br from-violet-500 to-blue-600 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-violet-500/40">
+                    <Shield size={36} className="text-white" />
+                  </div>
+                  <div className="absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full border-2 border-[#0D0E16] flex items-center justify-center">
+                    <Sparkles size={10} className="text-white" />
+                  </div>
                 </div>
-                <p className="text-sm text-aegis-secondary-dark mb-6">We'll set your default currency and payment methods</p>
-                <div className="relative mb-6">
-                  <button onClick={() => setShowDrop(!showDrop)}
-                    className="w-full flex items-center justify-between px-4 py-3 border border-border rounded-xl bg-card hover:border-aegis-accent-purple transition-all">
-                    <span className="flex items-center gap-3 text-sm font-medium">
-                      <span className="text-2xl">{country.flag}</span>
-                      <span>{country.name}</span>
-                      <span className="text-aegis-tertiary-dark">({country.currency})</span>
-                    </span>
-                    <ChevronDown size={16} className={`text-aegis-tertiary-dark transition-transform ${showDrop ? "rotate-180" : ""}`} />
-                  </button>
-                  {showDrop && (
-                    <motion.div initial={{ opacity:0,y:-5 }} animate={{ opacity:1,y:0 }}
-                      className="absolute z-20 w-full mt-2 bg-card border border-border rounded-xl shadow-lg overflow-hidden max-h-64 overflow-y-auto">
-                      {COUNTRIES.map(c => (
-                        <button key={c.code} onClick={() => handleCountrySelect(c)}
-                          className={`w-full flex items-center gap-3 px-4 py-3 text-sm hover:bg-aegis-bg-elevated transition-colors ${c.code === country.code ? "bg-aegis-bg-elevated font-medium" : ""}`}>
-                          <span className="text-xl">{c.flag}</span>
-                          <span className="flex-1 text-left">{c.name}</span>
-                          <span className="text-aegis-tertiary-dark text-xs">{c.currency}</span>
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
+                <div>
+                  <h1 className="text-4xl font-black text-white tracking-tight">NEXUS</h1>
+                  <p className="text-white/50 text-sm mt-1">Move value across Africa instantly</p>
                 </div>
-                <button onClick={() => { localStorage.setItem("aegis_country", country.code); localStorage.setItem("aegis_currency", country.currency); setStep("choice"); }}
-                  className="w-full py-3.5 bg-gradient-to-r from-aegis-accent-purple to-aegis-accent-blue text-white rounded-xl font-semibold hover:opacity-90 transition-opacity">
-                  Continue
+              </div>
+
+              {/* Feature pills */}
+              <div className="flex flex-wrap gap-2 justify-center">
+                <FeaturePill icon={<Zap size={12} />} text="Instant swaps" />
+                <FeaturePill icon={<Globe size={12} />} text="8+ African countries" />
+                <FeaturePill icon={<Lock size={12} />} text="Non-custodial" />
+                <FeaturePill icon={<Shield size={12} />} text="Secure by default" />
+              </div>
+
+              {/* CTA */}
+              <div className="space-y-3">
+                <button
+                  onClick={() => setStep("email")}
+                  className="w-full py-4 bg-gradient-to-r from-violet-600 to-blue-600 text-white font-bold text-lg rounded-2xl flex items-center justify-center gap-2 hover:from-violet-500 hover:to-blue-500 transition-all shadow-lg shadow-violet-500/30 active:scale-[0.98]"
+                >
+                  Get Started <ArrowRight size={20} />
                 </button>
-              </motion.div>
-            )}
-
-            {/* STEP 2: Choice */}
-            {step === "choice" && (
-              <motion.div key="choice" initial={{ opacity:0,x:20 }} animate={{ opacity:1,x:0 }} exit={{ opacity:0,x:-20 }}>
-                <div className="text-center mb-6">
-                  <span className="text-3xl">{country.flag}</span>
-                  <h2 className="text-xl font-semibold text-aegis-primary-dark dark:text-white mt-2">Welcome to Aegis</h2>
-                  <p className="text-sm text-aegis-secondary-dark mt-1">Your secure crypto wallet for Africa</p>
-                </div>
-                <div className="space-y-3">
-                  <button onClick={() => setStep("register")}
-                    className="w-full flex items-center gap-4 p-4 border-2 border-aegis-accent-purple rounded-xl hover:bg-purple-50 dark:hover:bg-purple-900/10 transition-all group">
-                    <div className="w-10 h-10 rounded-xl bg-aegis-accent-purple/10 flex items-center justify-center group-hover:bg-aegis-accent-purple/20">
-                      <Sparkles size={20} className="text-aegis-accent-purple" />
-                    </div>
-                    <div className="text-left">
-                      <div className="font-semibold text-aegis-primary-dark dark:text-white text-sm">Create Account</div>
-                      <div className="text-xs text-aegis-tertiary-dark">Secure with Face ID or fingerprint</div>
-                    </div>
-                  </button>
-                  <button onClick={() => setStep("login")}
-                    className="w-full flex items-center gap-4 p-4 border border-border rounded-xl hover:bg-aegis-bg-elevated transition-all group">
-                    <div className="w-10 h-10 rounded-xl bg-aegis-bg-elevated flex items-center justify-center">
-                      <Fingerprint size={20} className="text-aegis-accent-purple" />
-                    </div>
-                    <div className="text-left">
-                      <div className="font-semibold text-aegis-primary-dark dark:text-white text-sm">I Have an Account</div>
-                      <div className="text-xs text-aegis-tertiary-dark">Sign in with your passkey</div>
-                    </div>
-                  </button>
-                </div>
-                <button onClick={() => setStep("country")} className="w-full text-center text-xs text-aegis-tertiary-dark mt-4 hover:text-aegis-accent-purple">
-                  ← Change country
+                <button
+                  onClick={() => setStep("email")}
+                  className="w-full py-3.5 bg-white/5 border border-white/10 text-white/70 font-medium rounded-2xl hover:bg-white/10 transition-all text-sm"
+                >
+                  Already have an account? Sign in
                 </button>
-              </motion.div>
-            )}
+              </div>
 
-            {/* STEP 3: Register */}
-            {step === "register" && (
-              <motion.div key="register" initial={{ opacity:0,x:20 }} animate={{ opacity:1,x:0 }} exit={{ opacity:0,x:-20 }}>
-                <div className="flex items-center gap-2 mb-2">
-                  <Sparkles size={20} className="text-aegis-accent-purple" />
-                  <h2 className="text-xl font-semibold text-aegis-primary-dark dark:text-white">Create Account</h2>
-                </div>
-                <p className="text-sm text-aegis-secondary-dark mb-6">Your biometric will secure your account — no password needed</p>
-                <div className="space-y-3 mb-6">
-                  <input type="text" placeholder="Your name" value={displayName} onChange={e => setName(e.target.value)}
-                    className="w-full px-4 py-3 border border-border rounded-xl text-sm bg-card text-aegis-primary-dark dark:text-white placeholder:text-aegis-tertiary-dark focus:outline-none focus:border-aegis-accent-purple" />
-                </div>
-                {error && <div className="flex items-center gap-2 text-red-500 text-sm mb-4"><AlertCircle size={16} />{error}</div>}
-                <button onClick={handleRegister} disabled={loading}
-                  className="w-full py-3.5 bg-gradient-to-r from-aegis-accent-purple to-aegis-accent-blue text-white rounded-xl font-semibold hover:opacity-90 disabled:opacity-60 flex items-center justify-center gap-2">
-                  {loading ? <><Loader2 size={18} className="animate-spin" /> Creating…</> : <><Fingerprint size={18} /> Register with Face ID</>}
-                </button>
-                <button onClick={() => setStep("choice")} className="w-full text-center text-xs text-aegis-tertiary-dark mt-4 hover:text-aegis-accent-purple">← Back</button>
-              </motion.div>
-            )}
+              {/* Trust line */}
+              <p className="text-white/30 text-xs">
+                No password needed · Secured by email verification
+              </p>
+            </motion.div>
+          )}
 
-            {/* STEP 4: LEGAL CONSENT (NEW) */}
-            {step === "legal" && (
-              <motion.div key="legal" initial={{ opacity:0,x:20 }} animate={{ opacity:1,x:0 }} exit={{ opacity:0,x:-20 }}>
-                <div className="flex items-center gap-2 mb-1">
-                  <FileText size={20} className="text-aegis-accent-purple" />
-                  <h2 className="text-xl font-semibold text-aegis-primary-dark dark:text-white">Terms & Agreements</h2>
-                </div>
-                <p className="text-sm text-aegis-secondary-dark mb-5">
-                  Please review and accept the following before continuing.
-                </p>
+          {/* ── EMAIL ENTRY ── */}
+          {step === "email" && (
+            <motion.div
+              key="email"
+              initial={{ opacity: 0, x: 40 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -40 }}
+              transition={{ duration: 0.3 }}
+              className="w-full max-w-sm space-y-6"
+            >
+              <button onClick={() => setStep("landing")} className="flex items-center gap-1.5 text-white/50 hover:text-white/80 text-sm transition-colors">
+                <ChevronLeft size={16} /> Back
+              </button>
 
-                {/* Accept All shortcut */}
-                {!allConsented && (
-                  <button
-                    onClick={acceptAll}
-                    className="w-full mb-4 py-2.5 border border-[#5B3CF5] rounded-xl text-sm font-semibold text-[#5B3CF5] hover:bg-[#5B3CF5]/5 transition-colors flex items-center justify-center gap-2"
+              <div>
+                <h2 className="text-2xl font-bold text-white">Enter your email</h2>
+                <p className="text-white/50 text-sm mt-1.5">We'll send you a 6-digit code to sign in</p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="relative">
+                  <Mail size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" />
+                  <input
+                    type="email"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={e => { setEmail(e.target.value); setError(""); }}
+                    onKeyDown={e => e.key === "Enter" && handleSendOtp()}
+                    autoFocus
+                    autoComplete="email"
+                    className="w-full pl-11 pr-4 py-4 bg-white/5 border border-white/10 rounded-2xl text-white placeholder-white/30 text-base focus:outline-none focus:border-violet-500/60 focus:bg-white/8 transition-all"
+                  />
+                </div>
+
+                {error && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+                    className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5"
                   >
-                    <Check size={16} />
-                    Accept All
-                  </button>
+                    <AlertCircle size={14} /> {error}
+                  </motion.div>
                 )}
 
-                {/* Consent checklist */}
-                <div className="space-y-3 max-h-72 overflow-y-auto pr-1 mb-5">
-                  {CONSENT_ITEMS.map(item => (
-                    <label key={item.id} className="flex items-start gap-3 cursor-pointer group">
-                      <div
-                        onClick={() => setConsented(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
-                        className={`mt-0.5 w-5 h-5 rounded-md border-2 flex-shrink-0 flex items-center justify-center transition-all cursor-pointer ${
-                          consented[item.id]
-                            ? "bg-[#5B3CF5] border-[#5B3CF5]"
-                            : "border-border bg-card group-hover:border-[#5B3CF5]/60"
-                        }`}
-                      >
-                        {consented[item.id] && <Check size={12} className="text-white" />}
-                      </div>
-                      <span className="text-sm text-aegis-secondary-dark leading-snug select-none">
-                        {item.text}
-                        {item.linkedPolicyId && (
-                          <a
-                            href={`/legal?doc=${item.linkedPolicyId}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={e => e.stopPropagation()}
-                            className="ml-1 text-[#5B3CF5] hover:underline inline-flex items-center gap-0.5 text-xs"
-                          >
-                            Read <ExternalLink size={10} />
-                          </a>
-                        )}
-                      </span>
-                    </label>
-                  ))}
+                <button
+                  onClick={handleSendOtp}
+                  disabled={loading || !email.trim()}
+                  className="w-full py-4 bg-gradient-to-r from-violet-600 to-blue-600 text-white font-bold rounded-2xl flex items-center justify-center gap-2 hover:from-violet-500 hover:to-blue-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-violet-500/20 active:scale-[0.98]"
+                >
+                  {loading ? <><Loader2 size={18} className="animate-spin" /> Sending...</> : <>Continue <ArrowRight size={18} /></>}
+                </button>
+              </div>
+
+              <p className="text-white/25 text-xs text-center">
+                By continuing you agree to our Terms of Service and Privacy Policy
+              </p>
+            </motion.div>
+          )}
+
+          {/* ── OTP VERIFY ── */}
+          {step === "otp" && (
+            <motion.div
+              key="otp"
+              initial={{ opacity: 0, x: 40 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -40 }}
+              transition={{ duration: 0.3 }}
+              className="w-full max-w-sm space-y-6"
+            >
+              <button onClick={() => { setStep("email"); setError(""); }} className="flex items-center gap-1.5 text-white/50 hover:text-white/80 text-sm transition-colors">
+                <ChevronLeft size={16} /> Back
+              </button>
+
+              <div>
+                <div className="w-14 h-14 bg-violet-500/20 rounded-2xl flex items-center justify-center mb-4">
+                  <Mail size={24} className="text-violet-400" />
                 </div>
+                <h2 className="text-2xl font-bold text-white">Check your email</h2>
+                <p className="text-white/50 text-sm mt-1.5">
+                  We sent a 6-digit code to <span className="text-violet-400 font-medium">{email}</span>
+                </p>
+              </div>
+
+              <OtpInput onComplete={handleVerifyOtp} disabled={loading} />
+
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+                  className="flex items-center gap-2 text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-xl px-3 py-2.5"
+                >
+                  <AlertCircle size={14} /> {error}
+                </motion.div>
+              )}
+
+              {loading && (
+                <div className="flex items-center justify-center gap-2 text-violet-400 text-sm">
+                  <Loader2 size={16} className="animate-spin" /> Verifying...
+                </div>
+              )}
+
+              {/* Resend */}
+              <div className="text-center">
+                {countdown > 0 ? (
+                  <p className="text-white/30 text-sm">Resend code in <span className="text-white/60 font-medium">{countdown}s</span></p>
+                ) : (
+                  <button
+                    onClick={handleResend}
+                    disabled={loading}
+                    className="flex items-center gap-1.5 text-violet-400 text-sm mx-auto hover:text-violet-300 transition-colors disabled:opacity-40"
+                  >
+                    <RefreshCw size={14} /> Resend code
+                  </button>
+                )}
+              </div>
+
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3 flex items-start gap-2.5">
+                <Shield size={14} className="text-green-400 mt-0.5 flex-shrink-0" />
+                <p className="text-white/40 text-xs">
+                  This code expires in 10 minutes and can only be used once.
+                </p>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ── NAME ENTRY (new users) ── */}
+          {step === "name" && (
+            <motion.div
+              key="name"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="w-full max-w-sm space-y-6 text-center"
+            >
+              <div>
+                <div className="w-16 h-16 bg-green-500/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle2 size={28} className="text-green-400" />
+                </div>
+                <h2 className="text-2xl font-bold text-white">Email verified!</h2>
+                <p className="text-white/50 text-sm mt-1.5">What should we call you?</p>
+              </div>
+
+              <div className="space-y-3 text-left">
+                <input
+                  type="text"
+                  placeholder="Your full name"
+                  value={name}
+                  onChange={e => { setName(e.target.value); setError(""); }}
+                  onKeyDown={e => e.key === "Enter" && handleSetName()}
+                  autoFocus
+                  autoComplete="name"
+                  className="w-full px-4 py-4 bg-white/5 border border-white/10 rounded-2xl text-white placeholder-white/30 text-base focus:outline-none focus:border-violet-500/60 transition-all"
+                />
+
+                {error && (
+                  <div className="flex items-center gap-2 text-red-400 text-sm">
+                    <AlertCircle size={14} /> {error}
+                  </div>
+                )}
 
                 <button
-                  onClick={handleConsentContinue}
-                  disabled={!allConsented}
-                  className="w-full py-3.5 bg-gradient-to-r from-aegis-accent-purple to-aegis-accent-blue text-white rounded-xl font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+                  onClick={handleSetName}
+                  disabled={loading || !name.trim()}
+                  className="w-full py-4 bg-gradient-to-r from-violet-600 to-blue-600 text-white font-bold rounded-2xl flex items-center justify-center gap-2 disabled:opacity-40 hover:from-violet-500 hover:to-blue-500 transition-all shadow-lg shadow-violet-500/20"
                 >
-                  Continue
+                  {loading ? <><Loader2 size={18} className="animate-spin" /> Setting up...</> : <>Enter NEXUS <ArrowRight size={18} /></>}
                 </button>
+              </div>
+            </motion.div>
+          )}
 
-                <p className="text-center text-xs text-aegis-tertiary-dark mt-3">
-                  By continuing, you confirm you have read and accepted all policies above.
-                </p>
-              </motion.div>
-            )}
-
-            {/* STEP 5: Login */}
-            {step === "login" && (
-              <motion.div key="login" initial={{ opacity:0,x:20 }} animate={{ opacity:1,x:0 }} exit={{ opacity:0,x:-20 }}>
-                <div className="flex items-center gap-2 mb-2">
-                  <Fingerprint size={20} className="text-aegis-accent-purple" />
-                  <h2 className="text-xl font-semibold text-aegis-primary-dark dark:text-white">Welcome Back</h2>
-                </div>
-                <p className="text-sm text-aegis-secondary-dark mb-8">Touch your fingerprint sensor or use Face ID</p>
-                {error && <div className="flex items-center gap-2 text-red-500 text-sm mb-4"><AlertCircle size={16} />{error}</div>}
-                <button onClick={handleLogin} disabled={loading}
-                  className="w-full py-3.5 bg-gradient-to-r from-aegis-accent-purple to-aegis-accent-blue text-white rounded-xl font-semibold hover:opacity-90 disabled:opacity-60 flex items-center justify-center gap-2">
-                  {loading ? <><Loader2 size={18} className="animate-spin" /> Signing In…</> : <><Fingerprint size={18} /> Sign In with Passkey</>}
-                </button>
-                <button onClick={() => setStep("choice")} className="w-full text-center text-xs text-aegis-tertiary-dark mt-4 hover:text-aegis-accent-purple">← Back</button>
-              </motion.div>
-            )}
-
-            {/* STEP 6: Email */}
-            {step === "email" && (
-              <motion.div key="email" initial={{ opacity:0,x:20 }} animate={{ opacity:1,x:0 }} exit={{ opacity:0,x:-20 }}>
-                <div className="flex items-center gap-2 mb-2">
-                  <Mail size={20} className="text-aegis-accent-purple" />
-                  <h2 className="text-xl font-semibold text-aegis-primary-dark dark:text-white">Add your email</h2>
-                </div>
-                <p className="text-sm text-aegis-secondary-dark mb-6">For account recovery and important notifications</p>
-                <input type="email" placeholder="your@email.com" value={email} onChange={e => setEmail(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && handleSendCode()}
-                  className="w-full px-4 py-3 border border-border rounded-xl text-sm bg-card text-aegis-primary-dark dark:text-white placeholder:text-aegis-tertiary-dark focus:outline-none focus:border-aegis-accent-purple mb-4" />
-                {error && <div className="flex items-center gap-2 text-red-500 text-sm mb-4"><AlertCircle size={16} />{error}</div>}
-                <button onClick={handleSendCode} disabled={loading}
-                  className="w-full py-3.5 bg-gradient-to-r from-aegis-accent-purple to-aegis-accent-blue text-white rounded-xl font-semibold hover:opacity-90 disabled:opacity-60 flex items-center justify-center gap-2">
-                  {loading ? <><Loader2 size={18} className="animate-spin" /> Sending…</> : "Send Verification Code"}
-                </button>
-                <button onClick={() => navigate("/")} className="w-full text-center text-xs text-aegis-tertiary-dark mt-4 hover:text-aegis-accent-purple">
-                  Skip for now →
-                </button>
-              </motion.div>
-            )}
-
-            {/* STEP 7: Verify */}
-            {step === "verify" && (
-              <motion.div key="verify" initial={{ opacity:0,x:20 }} animate={{ opacity:1,x:0 }} exit={{ opacity:0,x:-20 }}>
-                <div className="text-center mb-6">
-                  <div className="w-14 h-14 bg-aegis-accent-purple/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                    <CheckCircle2 size={28} className="text-aegis-accent-purple" />
-                  </div>
-                  <h2 className="text-xl font-semibold text-aegis-primary-dark dark:text-white">Check your email</h2>
-                  <p className="text-sm text-aegis-secondary-dark mt-2">
-                    We sent a 6-digit code to<br />
-                    <span className="font-medium text-aegis-primary-dark dark:text-white">{email}</span>
-                  </p>
-                </div>
-                {error && <div className="flex items-center gap-2 text-red-500 text-sm mb-4 justify-center"><AlertCircle size={16} />{error}</div>}
-                {loading && <div className="flex justify-center mb-4"><Loader2 size={20} className="animate-spin text-aegis-accent-purple" /></div>}
-                <OtpInput onComplete={handleVerifyCode} />
-                <div className="text-center mt-4">
-                  {resendTimer > 0 ? (
-                    <p className="text-xs text-aegis-tertiary-dark">Resend in {resendTimer}s</p>
-                  ) : (
-                    <button onClick={handleResend} disabled={loading}
-                      className="text-xs text-aegis-accent-purple hover:underline flex items-center gap-1 mx-auto disabled:opacity-60">
-                      <RefreshCw size={12} /> Resend code
-                    </button>
-                  )}
-                </div>
-              </motion.div>
-            )}
-
-          </AnimatePresence>
-        </div>
-
-        {/* Footer legal links */}
-        {(step === "choice" || step === "country") && (
-          <p className="text-center text-white/50 text-xs mt-6">
-            By using Aegis you agree to our{" "}
-            <a href="/legal?doc=terms" target="_blank" rel="noopener noreferrer" className="text-white/80 underline">Terms</a>
-            {" & "}
-            <a href="/legal?doc=privacy" target="_blank" rel="noopener noreferrer" className="text-white/80 underline">Privacy Policy</a>
-            . © 2026 Cozanet.
-          </p>
-        )}
-      </motion.div>
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

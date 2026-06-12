@@ -58,18 +58,18 @@ async function sendResendEmail(to: string, code: string): Promise<void> {
     method: "POST",
     headers: { "Authorization": `Bearer ${RESEND_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: `Aegis <${FROM_EMAIL}>`,
+      from: `NEXUS <${FROM_EMAIL}>`,
       to:   [to],
-      subject: "Your Aegis verification code",
+      subject: "Your NEXUS verification code",
       html: `
         <div style="font-family:Inter,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0B0C10;color:#fff;border-radius:16px">
           <div style="text-align:center;margin-bottom:32px">
             <div style="width:56px;height:56px;background:linear-gradient(135deg,#5B3CF5,#3B5BDB);border-radius:14px;display:inline-flex;align-items:center;justify-content:center;margin-bottom:12px">
               <span style="font-size:28px">🛡️</span>
             </div>
-            <h1 style="color:#fff;font-size:24px;font-weight:700;margin:0">Aegis</h1>
+            <h1 style="color:#fff;font-size:24px;font-weight:700;margin:0">NEXUS</h1>
           </div>
-          <h2 style="font-size:18px;font-weight:600;color:#fff;margin:0 0 8px">Verify your email</h2>
+          <h2 style="font-size:18px;font-weight:600;color:#fff;margin:0 0 8px">Verify your NEXUS email</h2>
           <p style="color:#9ca3af;font-size:14px;margin:0 0 24px">Enter this code in the app. It expires in 10 minutes.</p>
           <div style="background:#1a1c20;border:1px solid rgba(91,60,245,0.3);border-radius:12px;padding:24px;text-align:center;margin-bottom:24px">
             <span style="font-size:36px;font-weight:700;letter-spacing:8px;color:#5B3CF5;font-family:monospace">${code}</span>
@@ -95,10 +95,20 @@ export const authRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
-      const existing = await db.select({ id: users.id })
+      const existing = await db.select({ id: users.id, name: users.name })
         .from(users).where(eq(users.credentialId, input.credentialId)).limit(1);
       if (existing.length > 0) {
-        throw new TRPCError({ code: "CONFLICT", message: "Credential already registered — try logging in instead" });
+        // For email-based auth, update the name if provided and return JWT
+        if (input.displayName && input.displayName.trim()) {
+          await db.update(users)
+            .set({ name: input.displayName.trim() })
+            .where(eq(users.id, existing[0].id));
+        }
+        return {
+          token: signToken(existing[0].id),
+          user:  { id: existing[0].id, name: input.displayName ?? existing[0].name ?? null },
+          walletAddress: null,
+        };
       }
 
       const safeSlice    = input.credentialId.replace(/[^a-zA-Z0-9+/=_-]/g, "").slice(0, 48);
@@ -137,7 +147,7 @@ export const authRouter = router({
           address:      walletAddress,
           chainId:      EMBEDDED_WALLET_CHAIN_ID,
           type:         "EMBEDDED",
-          label:        "My Aegis Wallet",
+          label:        "My NEXUS Wallet",
           walletAnchor,
         });
       } catch { /* unique constraint race — already exists */ }
@@ -239,31 +249,52 @@ export const authRouter = router({
 
   logout: publicProcedure.mutation(() => ({ success: true })),
 
-  // ── Send verification code ──────────────────────────────────────
-  sendVerificationCode: protectedProcedure
+  // ── Send verification code (PUBLIC — email-first auth) ─────────
+  // Creates user if not exists, sends OTP, returns isNewUser flag
+  sendVerificationCode: publicProcedure
     .input(z.object({ email: z.string().email() }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+    .mutation(async ({ input }) => {
       const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
-      // Check email not taken by another user
-      const [existing] = await db.select({ id: users.id })
-        .from(users).where(eq(users.email, input.email)).limit(1);
-      if (existing && existing.id !== ctx.user.id) {
-        throw new TRPCError({ code: "CONFLICT", message: "Email already in use" });
+      const email = input.email.trim().toLowerCase();
+
+      // Find or create user by email
+      let [existingUser] = await db.select({ id: users.id, name: users.name })
+        .from(users).where(eq(users.email, email)).limit(1);
+
+      let isNewUser = false;
+      if (!existingUser) {
+        // Create a new user with just their email — name filled in later
+        const openId = generateAegisId();
+        const credId = btoa(email); // email-based credential
+        const { walletAddress } = await deriveWalletAddress(credId);
+        const inserted = await db.insert(users).values({
+          openId,
+          name:          email.split("@")[0], // temp name from email
+          email,
+          emailVerified: false,
+          credentialId:  credId,
+          credentialHash: hashCredential(credId),
+          walletAddress,
+          kycStatus:     "NONE",
+          isAdmin:       ADMIN_EMAILS.has(email),
+        }).returning({ id: users.id });
+        existingUser = inserted[0];
+        isNewUser = true;
+        // Anchor the wallet
+        await resolveAndAnchorWallet({ db, userId: inserted[0].id, credentialId: credId, email });
       }
 
       const code      = generateCode();
       const expiresAt = new Date(Date.now() + CODE_TTL_MS);
       await db.update(users).set({
-        email:            input.email,
         verificationCode: code,
         codeExpiresAt:    expiresAt,
-      }).where(eq(users.id, ctx.user.id));
+      }).where(eq(users.id, existingUser.id));
 
-      await sendResendEmail(input.email, code);
-      return { sent: true };
+      await sendResendEmail(email, code);
+      return { sent: true, isNewUser };
     }),
 
   // ── Verify code ─────────────────────────────────────────────────
@@ -323,35 +354,39 @@ export const authRouter = router({
       return { sent: true };
     }),
 
-  // ── verifyEmail alias for verifyCode ────────────────────────────
-  verifyEmail: protectedProcedure
+  // ── verifyEmail — PUBLIC — verifies OTP, returns JWT ───────────
+  verifyEmail: publicProcedure
     .input(z.object({ code: z.string().length(6) }))
-    .mutation(async ({ input, ctx }) => {
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+    .mutation(async ({ input }) => {
       const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
+      // Find user with this code
       const [u] = await db.select({
+        id:               users.id,
         verificationCode: users.verificationCode,
         codeExpiresAt:    users.codeExpiresAt,
         email:            users.email,
         walletAddress:    users.walletAddress,
         credentialHash:   users.credentialHash,
         openId:           users.openId,
-      }).from(users).where(eq(users.id, ctx.user.id)).limit(1);
+        name:             users.name,
+      }).from(users).where(eq(users.verificationCode, input.code)).limit(1);
 
-      if (!u?.verificationCode) throw new TRPCError({ code: "BAD_REQUEST", message: "No code found — request a new one" });
+      if (!u) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid code — request a new one" });
       if (u.codeExpiresAt && u.codeExpiresAt < new Date()) throw new TRPCError({ code: "BAD_REQUEST", message: "Code expired — request a new one" });
-      if (u.verificationCode !== input.code) throw new TRPCError({ code: "BAD_REQUEST", message: "Incorrect code" });
 
-      await db.update(users).set({ emailVerified: true, verificationCode: null, codeExpiresAt: null })
-        .where(eq(users.id, ctx.user.id));
+      await db.update(users).set({
+        emailVerified:    true,
+        verificationCode: null,
+        codeExpiresAt:    null,
+      }).where(eq(users.id, u.id));
 
-      // 🔒 VAULT LOCK — email verified = wallet locked to email permanently
+      // 🔒 VAULT LOCK
       if (u.email && u.walletAddress) {
         await lockWalletToEmail({
           db,
-          userId:         ctx.user.id,
+          userId:         u.id,
           email:          u.email,
           walletAddress:  u.walletAddress,
           credentialHash: u.credentialHash ?? "",
@@ -359,7 +394,8 @@ export const authRouter = router({
         });
       }
 
-      return { verified: true };
+      const token = signToken(u.id);
+      return { verified: true, token, userId: u.id };
     }),
 
   // ── Update name + phone ─────────────────────────────────────────
