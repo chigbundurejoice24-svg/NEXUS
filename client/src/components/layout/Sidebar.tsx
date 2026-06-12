@@ -66,10 +66,10 @@ export default function Sidebar({
       {/* Logo */}
       <div className="h-[72px] flex items-center px-4 border-b border-border">
         <div className="flex items-center gap-3 overflow-hidden">
-          <img src="/logo.png" alt="AEGIS" className="w-9 h-9 flex-shrink-0" />
+          <img src="/logo.png" alt="NEXUS" className="w-9 h-9 flex-shrink-0" />
           {!collapsed && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col">
-              <span className="font-semibold text-[15px] tracking-tight text-aegis-primary-dark dark:text-white whitespace-nowrap">AEGIS</span>
+              <span className="font-semibold text-[15px] tracking-tight text-aegis-primary-dark dark:text-white whitespace-nowrap">NEXUS</span>
               <span className="text-[10px] text-aegis-tertiary-dark -mt-0.5 whitespace-nowrap">by Cozanet</span>
             </motion.div>
           )}

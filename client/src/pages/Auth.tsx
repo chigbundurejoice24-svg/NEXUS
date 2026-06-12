@@ -132,7 +132,7 @@ export default function Auth() {
       const credential = await navigator.credentials.create({
         publicKey: {
           challenge: crypto.getRandomValues(new Uint8Array(32)),
-          rp: { name: "Aegis", id: window.location.hostname },
+          rp: { name: "NEXUS", id: window.location.hostname },
           user: { id: userId, name, displayName: name },
           pubKeyCredParams: [{ alg: -7, type: "public-key" }, { alg: -257, type: "public-key" }],
           authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "preferred", residentKey: "preferred" },
@@ -225,7 +225,7 @@ export default function Auth() {
           <div className="w-16 h-16 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Shield size={32} className="text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-white">AEGIS</h1>
+          <h1 className="text-3xl font-bold text-white">NEXUS</h1>
           <p className="text-white/70 text-sm mt-1">Move value across Africa instantly</p>
         </div>
 

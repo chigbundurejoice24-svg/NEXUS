@@ -44,7 +44,7 @@ function generateAegisId(): string {
   const randBytes = new Uint8Array(8);
   // Use crypto-style randomness via Math.random fallback (server-side)
   for (let i = 0; i < 8; i++) {
-    id += chars[Math.floor(Math.random() * chars.length)];
+    const randomByte = crypto.randomBytes(1)[0]; id += chars[randomByte % chars.length];
   }
   return id;
 }

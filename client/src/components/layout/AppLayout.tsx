@@ -35,7 +35,7 @@ export default function AppLayout() {
   const [mobileMenuOpen, setMobileMenuOpen]     = useState(false);
 
   const darkMode   = currentTheme === 'dark';
-  const pageTitle  = pageTitles[location.pathname] ?? 'AEGIS';
+  const pageTitle  = pageTitles[location.pathname] ?? 'NEXUS';
 
   function toggleDark() { setTheme(darkMode ? 'light' : 'dark'); }
 
