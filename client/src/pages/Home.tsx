@@ -12,7 +12,7 @@ export default function Home() {
     if (getToken()) {
       navigate('/', { replace: true })
     } else {
-      navigate('/auth', { replace: true })
+      navigate('/', { replace: true })
     }
   }, [navigate])
   return null

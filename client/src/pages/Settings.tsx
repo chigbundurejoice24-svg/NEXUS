@@ -134,7 +134,7 @@ export default function Settings() {
 
   function handleLogout() {
     logout();
-    navigate("/auth");
+    navigate("/");
   }
 
   // ── Early returns AFTER all hooks ─────────────────────────────────────────
@@ -148,7 +148,7 @@ export default function Settings() {
     <div className="flex flex-col items-center justify-center h-64 gap-4">
       <AlertCircle size={32} className="text-red-400"/>
       <p className="text-sm text-aegis-tertiary-dark">Please log in to access settings.</p>
-      <button onClick={() => navigate("/auth")}
+      <button onClick={() => navigate("/")}
         className="px-6 py-2.5 bg-gradient-to-r from-[#5B3CF5] to-[#3B5BDB] text-white rounded-xl text-sm font-medium">
         Go to Login
       </button>
